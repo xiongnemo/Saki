@@ -1,10 +1,13 @@
 # Saki
 
+<!-- Add to your README -->
+[![AI Slop Inside](https://sladge.net/badge.svg)](https://sladge.net)
+
 > [!NOTE]  
-> This project is in active development. It's still in an unstable state.
+> This project actively uses Claude Opus 4.6 (Max) and GPT 5.4 (Thinking) to refactor legacy code and ships new functionality. Due to the nature of Terminal GUI application some GUI may not be tested.
 
 > [!IMPORTANT]  
-> This project is not ready for production use.
+> This project is in active development. It's still in an unstable state and is not ready for production use.
 
 > [!WARNING]  
 > Proceed with your own risk. This project is not fully tested and has known bugs. While the author is working on it, you are also welcome to submit issues and feature requests.
