@@ -544,6 +544,35 @@ func TestPlayingStatusLabelsUseStableWidths(t *testing.T) {
 	}
 }
 
+func TestAudioInfoLabelUsesResponsiveFallbacks(t *testing.T) {
+	info := models.AudioInfo{Codec: "flac", BitDepth: 16, SampleRate: 44100, BitRateKbps: 880, Channels: 2}
+	if got := audioInfoLabel(info, 17); got != "FLAC 16/44.1 880k" {
+		t.Fatalf("full audio info label = %q", got)
+	}
+	if got := audioInfoLabel(info, 12); got != "FLAC 16/44.1" {
+		t.Fatalf("medium audio info label = %q", got)
+	}
+	if got := audioInfoLabel(info, 4); got != "FLAC" {
+		t.Fatalf("small audio info label = %q", got)
+	}
+	if got := audioInfoLabel(info, 3); got != "" {
+		t.Fatalf("too-small audio info label = %q", got)
+	}
+}
+
+func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
+	state := models.CurrentState{
+		CacheReady: true,
+		AudioInfo:  models.AudioInfo{Codec: "ALAC", BitDepth: 24, SampleRate: 48000, BitRateKbps: 921},
+	}
+	if got := playingLeftText(state, 80); got != "Stream Ready  Cached  ALAC 24/48 921k" {
+		t.Fatalf("playing left text = %q", got)
+	}
+	if got := playingLeftText(state, len("Stream Ready  Cached  ALAC")-1); got != "Stream Ready  Cached" {
+		t.Fatalf("narrow playing left text = %q", got)
+	}
+}
+
 func TestControlsHelpMentionsViewSearch(t *testing.T) {
 	if !strings.Contains(controlsHelpText, "/ Search View") {
 		t.Fatalf("controls help missing view search shortcut: %q", controlsHelpText)

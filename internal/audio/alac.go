@@ -8,6 +8,7 @@ import (
 	"time"
 
 	alac "github.com/mycophonic/saprobe-alac"
+	"github.com/xiongnemo/saki/internal/models"
 )
 
 const alacDecodeBufferBytes = 32 * 1024
@@ -186,6 +187,21 @@ func (s *alacPCM) Duration() float64 {
 		return 0
 	}
 	return float64(s.lengthFrames) / float64(s.format.SampleRate)
+}
+
+func (s *alacPCM) AudioInfo() models.AudioInfo {
+	return models.AudioInfo{
+		Codec:      "ALAC",
+		BitDepth:   s.format.BitDepth,
+		SampleRate: s.format.SampleRate,
+		Channels:   s.format.Channels,
+	}
+}
+
+func (s *alacSource) AudioInfo() models.AudioInfo {
+	info := s.alacPCM.AudioInfo()
+	info.BitRateKbps = fileBitRateKbps(s.file, s.Duration())
+	return info
 }
 
 func isMP4Header(header []byte) bool {

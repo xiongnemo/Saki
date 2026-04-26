@@ -16,6 +16,7 @@ import (
 
 	"github.com/hajimehoshi/go-mp3"
 	"github.com/mewkiz/flac"
+	"github.com/xiongnemo/saki/internal/models"
 )
 
 const (
@@ -63,6 +64,7 @@ type streamingPCMSource struct {
 	duration     float64
 	lengthFrames uint64
 	frameBytes   int
+	audioInfo    models.AudioInfo
 
 	positionFrames atomic.Uint64
 	compressedRead atomic.Int64
@@ -135,6 +137,8 @@ func (s *streamingPCMSource) openALACStream(startFrame uint64) error {
 	if duration <= 0 {
 		duration = s.request.DurationSeconds
 	}
+	audioInfo := decoder.AudioInfo()
+	audioInfo.BitRateKbps = averageBitRateKbps(reader.size, duration)
 	var lengthFrames uint64
 	if duration > 0 {
 		lengthFrames = uint64(duration * float64(sampleRate))
@@ -169,6 +173,7 @@ func (s *streamingPCMSource) openALACStream(startFrame uint64) error {
 	s.duration = duration
 	s.lengthFrames = lengthFrames
 	s.frameBytes = frameBytes
+	s.audioInfo = audioInfo
 	s.positionFrames.Store(actualFrame)
 	s.started.Store(false)
 	s.buffering.Store(true)
@@ -217,8 +222,9 @@ func (s *streamingPCMSource) openStream(byteOffset int64, startFrame uint64, raw
 
 	counter := &countingReadCloser{ReadCloser: resp.Body, counter: &s.compressedRead}
 	s.compressedRead.Store(0)
-	if total := responseTotalBytes(resp); total >= 0 {
-		s.totalBytes.Store(total)
+	totalBytes := responseTotalBytes(resp)
+	if totalBytes >= 0 {
+		s.totalBytes.Store(totalBytes)
 	}
 
 	var decoder streamPCMDecoder
@@ -249,6 +255,7 @@ func (s *streamingPCMSource) openStream(byteOffset int64, startFrame uint64, raw
 	if duration <= 0 {
 		duration = s.request.DurationSeconds
 	}
+	audioInfo := streamDecoderAudioInfo(decoder, kind, totalBytes, duration)
 	var lengthFrames uint64
 	if duration > 0 {
 		lengthFrames = uint64(duration * float64(sampleRate))
@@ -270,6 +277,7 @@ func (s *streamingPCMSource) openStream(byteOffset int64, startFrame uint64, raw
 	s.duration = duration
 	s.lengthFrames = lengthFrames
 	s.frameBytes = frameBytes
+	s.audioInfo = audioInfo
 	s.positionFrames.Store(startFrame)
 	s.started.Store(false)
 	s.buffering.Store(true)
@@ -480,6 +488,12 @@ func (s *streamingPCMSource) IsBuffering() bool {
 	return s.buffering.Load()
 }
 
+func (s *streamingPCMSource) AudioInfo() models.AudioInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.audioInfo
+}
+
 func (s *streamingPCMSource) currentRing() (*pcmRingBuffer, int) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -595,6 +609,14 @@ func (d *mp3StreamDecoder) Read(p []byte) (int, error) {
 func (d *mp3StreamDecoder) Channels() uint32   { return 2 }
 func (d *mp3StreamDecoder) SampleRate() uint32 { return d.sampleRate }
 func (d *mp3StreamDecoder) Duration() float64  { return d.duration }
+
+func (d *mp3StreamDecoder) AudioInfo() models.AudioInfo {
+	return models.AudioInfo{
+		Codec:      "MP3",
+		SampleRate: int(d.sampleRate),
+		Channels:   2,
+	}
+}
 
 type wavStreamInfo struct {
 	format       wavFormat
@@ -749,6 +771,20 @@ func (d *wavStreamDecoder) Channels() uint32   { return uint32(d.info.format.num
 func (d *wavStreamDecoder) SampleRate() uint32 { return d.info.format.sampleRate }
 func (d *wavStreamDecoder) Duration() float64  { return d.info.duration }
 
+func (d *wavStreamDecoder) AudioInfo() models.AudioInfo {
+	bitRateKbps := 0
+	if d.info.format.byteRate > 0 {
+		bitRateKbps = int((uint64(d.info.format.byteRate)*8 + 500) / 1000)
+	}
+	return models.AudioInfo{
+		Codec:       "WAV",
+		BitDepth:    int(d.info.format.bitsPerSample),
+		SampleRate:  int(d.info.format.sampleRate),
+		BitRateKbps: bitRateKbps,
+		Channels:    int(d.info.format.numChannels),
+	}
+}
+
 type flacStreamDecoder struct {
 	stream       *flac.Stream
 	posFrames    uint64
@@ -828,3 +864,26 @@ func (d *flacStreamDecoder) readFrame() error {
 func (d *flacStreamDecoder) Channels() uint32   { return d.channels }
 func (d *flacStreamDecoder) SampleRate() uint32 { return d.sampleRate }
 func (d *flacStreamDecoder) Duration() float64  { return d.duration }
+
+func (d *flacStreamDecoder) AudioInfo() models.AudioInfo {
+	return models.AudioInfo{
+		Codec:      "FLAC",
+		BitDepth:   int(d.bits),
+		SampleRate: int(d.sampleRate),
+		Channels:   int(d.channels),
+	}
+}
+
+func streamDecoderAudioInfo(decoder streamPCMDecoder, kind string, totalBytes int64, duration float64) models.AudioInfo {
+	info := models.AudioInfo{}
+	if provider, ok := decoder.(audioInfoProvider); ok {
+		info = provider.AudioInfo()
+	}
+	if info.Codec == "" {
+		info.Codec = models.NormalizeAudioCodec(kind)
+	}
+	if info.BitRateKbps == 0 {
+		info.BitRateKbps = averageBitRateKbps(totalBytes, duration)
+	}
+	return info
+}

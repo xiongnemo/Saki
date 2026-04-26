@@ -1,22 +1,112 @@
 package models
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Song struct {
-	ID       string `json:"id"`
-	Parent   string `json:"parent"`
-	Track    int    `json:"track"`
-	Title    string `json:"title"`
-	Artist   string `json:"artist"`
-	Album    string `json:"album"`
-	AlbumID  string `json:"albumId"`
-	Duration int    `json:"duration"`
-	CoverArt string `json:"coverArt"`
-	Image    string `json:"-"`
+	ID                    string `json:"id"`
+	Parent                string `json:"parent"`
+	Track                 int    `json:"track"`
+	Title                 string `json:"title"`
+	Artist                string `json:"artist"`
+	Album                 string `json:"album"`
+	AlbumID               string `json:"albumId"`
+	Duration              int    `json:"duration"`
+	CoverArt              string `json:"coverArt"`
+	Suffix                string `json:"suffix,omitempty"`
+	ContentType           string `json:"contentType,omitempty"`
+	TranscodedSuffix      string `json:"transcodedSuffix,omitempty"`
+	TranscodedContentType string `json:"transcodedContentType,omitempty"`
+	BitRateKbps           int    `json:"bitRate,omitempty"`
+	BitDepth              int    `json:"bitDepth,omitempty"`
+	SamplingRate          int    `json:"samplingRate,omitempty"`
+	ChannelCount          int    `json:"channelCount,omitempty"`
+	Image                 string `json:"-"`
 }
 
 func (s Song) String() string {
 	return s.Title
+}
+
+func (s Song) AudioInfo() AudioInfo {
+	codec := s.TranscodedSuffix
+	contentType := s.TranscodedContentType
+	if codec == "" {
+		codec = s.Suffix
+	}
+	if contentType == "" {
+		contentType = s.ContentType
+	}
+	if codec == "" {
+		codec = contentType
+	}
+	return AudioInfo{
+		Codec:       NormalizeAudioCodec(codec),
+		BitDepth:    s.BitDepth,
+		SampleRate:  s.SamplingRate,
+		BitRateKbps: s.BitRateKbps,
+		Channels:    s.ChannelCount,
+	}
+}
+
+type AudioInfo struct {
+	Codec       string `json:"codec,omitempty"`
+	BitDepth    int    `json:"bitDepth,omitempty"`
+	SampleRate  int    `json:"samplingRate,omitempty"`
+	BitRateKbps int    `json:"bitRate,omitempty"`
+	Channels    int    `json:"channelCount,omitempty"`
+}
+
+func (i AudioInfo) Empty() bool {
+	return i.Codec == "" && i.BitDepth == 0 && i.SampleRate == 0 && i.BitRateKbps == 0 && i.Channels == 0
+}
+
+func (i AudioInfo) WithFallback(fallback AudioInfo) AudioInfo {
+	if i.Codec == "" {
+		i.Codec = fallback.Codec
+	}
+	if i.BitDepth == 0 {
+		i.BitDepth = fallback.BitDepth
+	}
+	if i.SampleRate == 0 {
+		i.SampleRate = fallback.SampleRate
+	}
+	if i.BitRateKbps == 0 {
+		i.BitRateKbps = fallback.BitRateKbps
+	}
+	if i.Channels == 0 {
+		i.Channels = fallback.Channels
+	}
+	return i
+}
+
+func NormalizeAudioCodec(value string) string {
+	value = strings.TrimSpace(strings.TrimPrefix(value, "."))
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	switch lower {
+	case "audio/mpeg", "audio/mp3", "mpeg", "mp3":
+		return "MP3"
+	case "audio/flac", "audio/x-flac", "flac":
+		return "FLAC"
+	case "audio/wav", "audio/wave", "audio/x-wav", "wav", "wave":
+		return "WAV"
+	case "audio/mp4", "audio/x-m4a", "m4a", "mp4":
+		return "M4A"
+	case "audio/alac", "alac":
+		return "ALAC"
+	case "audio/aac", "aac":
+		return "AAC"
+	default:
+		if slash := strings.LastIndex(lower, "/"); slash >= 0 && slash+1 < len(lower) {
+			lower = lower[slash+1:]
+		}
+		return strings.ToUpper(strings.TrimPrefix(lower, "x-"))
+	}
 }
 
 type Album struct {
@@ -164,6 +254,7 @@ type CurrentState struct {
 	BufferedPercent    float64
 	BufferPercentKnown bool
 	CacheReady         bool
+	AudioInfo          AudioInfo
 	LastError          string
 	CurrentPlaylist    Playlist
 	CurrentTrackIndex  int

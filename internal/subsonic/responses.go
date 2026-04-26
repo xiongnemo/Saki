@@ -126,13 +126,21 @@ type playlistJSON struct {
 }
 
 type songJSON struct {
-	ID       string `json:"id"`
-	Parent   string `json:"parent"`
-	Title    string `json:"title"`
-	Album    string `json:"album"`
-	Artist   string `json:"artist"`
-	Track    int    `json:"track"`
-	CoverArt string `json:"coverArt"`
-	Duration int    `json:"duration"`
-	AlbumID  string `json:"albumId"`
+	ID                    string `json:"id"`
+	Parent                string `json:"parent"`
+	Title                 string `json:"title"`
+	Album                 string `json:"album"`
+	Artist                string `json:"artist"`
+	Track                 int    `json:"track"`
+	CoverArt              string `json:"coverArt"`
+	Duration              int    `json:"duration"`
+	AlbumID               string `json:"albumId"`
+	Suffix                string `json:"suffix"`
+	ContentType           string `json:"contentType"`
+	TranscodedSuffix      string `json:"transcodedSuffix"`
+	TranscodedContentType string `json:"transcodedContentType"`
+	BitRateKbps           int    `json:"bitRate"`
+	BitDepth              int    `json:"bitDepth"`
+	SamplingRate          int    `json:"samplingRate"`
+	ChannelCount          int    `json:"channelCount"`
 }

@@ -61,3 +61,13 @@ Status: completed.
 - [x] Keep completed cache as the preferred path and retain mpv fallback only when Range streaming is unavailable.
 - [x] Update README runtime/backend wording for first-class ALAC/M4A streaming.
 - [x] Verify Range reader behavior, ALAC streaming decode/seek, and existing regressions with tests.
+
+## Playing Audio Format Badge
+
+Status: completed.
+
+- [x] Map Subsonic/OpenSubsonic audio metadata onto songs.
+- [x] Surface decoder format metadata from miniaudio sources through player state.
+- [x] Render a compact codec/bit-depth/sample-rate/bitrate badge on the Playing status row.
+- [x] Keep the status row responsive so the badge does not overlap repeat/shuffle or volume controls.
+- [x] Verify with focused unit tests and `go test ./...`.

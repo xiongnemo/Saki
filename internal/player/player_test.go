@@ -102,6 +102,43 @@ func TestStateReportsCacheReadyForCurrentTrack(t *testing.T) {
 	}
 }
 
+func TestAudioFormatEventMergesWithSongMetadata(t *testing.T) {
+	backend := newFakeAudio()
+	service := New(subsonic.NewClient(nil), backend, newFakeMedia())
+	defer service.Close()
+
+	track := models.Song{
+		ID:           "s1",
+		Title:        "Song",
+		Suffix:       "m4a",
+		BitRateKbps:  921,
+		SamplingRate: 44100,
+	}
+	service.mu.Lock()
+	service.currentTrack = &track
+	service.audioInfo = track.AudioInfo()
+	service.mu.Unlock()
+
+	backend.events <- audio.Event{
+		Type: audio.EventFormat,
+		AudioInfo: models.AudioInfo{
+			Codec:      "ALAC",
+			BitDepth:   24,
+			SampleRate: 48000,
+			Channels:   2,
+		},
+	}
+
+	eventually(t, func() bool {
+		info := service.State().AudioInfo
+		return info.Codec == "ALAC" &&
+			info.BitDepth == 24 &&
+			info.SampleRate == 48000 &&
+			info.Channels == 2 &&
+			info.BitRateKbps == 921
+	})
+}
+
 func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 	backend := newFakeAudio()
 	backend.playing = true

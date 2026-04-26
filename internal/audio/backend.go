@@ -2,6 +2,8 @@ package audio
 
 import (
 	"context"
+
+	"github.com/xiongnemo/saki/internal/models"
 )
 
 type EventType int
@@ -12,6 +14,7 @@ const (
 	EventError
 	EventBuffering
 	EventBufferProgress
+	EventFormat
 )
 
 type LoadRequest struct {
@@ -29,6 +32,7 @@ type Event struct {
 	BufferedSeconds float64
 	BufferedBytes   int64
 	TotalBytes      int64
+	AudioInfo       models.AudioInfo
 }
 
 type Backend interface {

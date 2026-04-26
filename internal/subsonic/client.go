@@ -735,15 +735,23 @@ func mapSongs(songs []songJSON) []models.Song {
 
 func mapSong(s songJSON) models.Song {
 	return models.Song{
-		ID:       s.ID,
-		Parent:   s.Parent,
-		Track:    s.Track,
-		Title:    s.Title,
-		Artist:   s.Artist,
-		Album:    s.Album,
-		AlbumID:  s.AlbumID,
-		Duration: s.Duration,
-		CoverArt: s.CoverArt,
+		ID:                    s.ID,
+		Parent:                s.Parent,
+		Track:                 s.Track,
+		Title:                 s.Title,
+		Artist:                s.Artist,
+		Album:                 s.Album,
+		AlbumID:               s.AlbumID,
+		Duration:              s.Duration,
+		CoverArt:              s.CoverArt,
+		Suffix:                s.Suffix,
+		ContentType:           s.ContentType,
+		TranscodedSuffix:      s.TranscodedSuffix,
+		TranscodedContentType: s.TranscodedContentType,
+		BitRateKbps:           s.BitRateKbps,
+		BitDepth:              s.BitDepth,
+		SamplingRate:          s.SamplingRate,
+		ChannelCount:          s.ChannelCount,
 	}
 }
 

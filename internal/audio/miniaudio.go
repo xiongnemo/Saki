@@ -18,6 +18,7 @@ import (
 	"github.com/gen2brain/malgo"
 	"github.com/hajimehoshi/go-mp3"
 	"github.com/mewkiz/flac"
+	"github.com/xiongnemo/saki/internal/models"
 )
 
 const (
@@ -59,6 +60,7 @@ func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error 
 	if err != nil {
 		return err
 	}
+	audioInfo := sourceAudioInfo(source)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -101,6 +103,7 @@ func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error 
 	b.lastBufferingKnown = false
 	b.lastBufferProgress = time.Time{}
 	b.lastPositionEvent = time.Time{}
+	b.emitLocked(Event{Type: EventFormat, AudioInfo: audioInfo})
 	return nil
 }
 
@@ -381,6 +384,24 @@ type pcmSource interface {
 	Duration() float64
 }
 
+type audioInfoProvider interface {
+	AudioInfo() models.AudioInfo
+}
+
+func sourceAudioInfo(source pcmSource) models.AudioInfo {
+	info := models.AudioInfo{}
+	if provider, ok := source.(audioInfoProvider); ok {
+		info = provider.AudioInfo()
+	}
+	if info.SampleRate == 0 {
+		info.SampleRate = int(source.SampleRate())
+	}
+	if info.Channels == 0 {
+		info.Channels = int(source.Channels())
+	}
+	return info
+}
+
 func openPCMSource(ctx context.Context, request LoadRequest) (pcmSource, error) {
 	path := request.URI
 	if parsed, err := url.Parse(request.URI); err == nil && parsed.Scheme == "file" {
@@ -497,6 +518,15 @@ func (s *mp3Source) Duration() float64 {
 		return 0
 	}
 	return float64(s.lengthFrames) / float64(s.sampleRate)
+}
+
+func (s *mp3Source) AudioInfo() models.AudioInfo {
+	return models.AudioInfo{
+		Codec:       "MP3",
+		SampleRate:  int(s.sampleRate),
+		Channels:    2,
+		BitRateKbps: fileBitRateKbps(s.file, s.Duration()),
+	}
 }
 
 type wavSource struct {
@@ -698,6 +728,20 @@ func (s *wavSource) Duration() float64 {
 	return float64(s.lengthFrames) / float64(s.format.sampleRate)
 }
 
+func (s *wavSource) AudioInfo() models.AudioInfo {
+	bitRateKbps := 0
+	if s.format.byteRate > 0 {
+		bitRateKbps = int((uint64(s.format.byteRate)*8 + 500) / 1000)
+	}
+	return models.AudioInfo{
+		Codec:       "WAV",
+		BitDepth:    int(s.format.bitsPerSample),
+		SampleRate:  int(s.format.sampleRate),
+		BitRateKbps: bitRateKbps,
+		Channels:    int(s.format.numChannels),
+	}
+}
+
 type flacSource struct {
 	file         *os.File
 	stream       *flac.Stream
@@ -809,4 +853,32 @@ func (s *flacSource) Position() float64 {
 }
 func (s *flacSource) Duration() float64 {
 	return float64(s.lengthFrames) / float64(s.sampleRate)
+}
+
+func (s *flacSource) AudioInfo() models.AudioInfo {
+	return models.AudioInfo{
+		Codec:       "FLAC",
+		BitDepth:    int(s.bits),
+		SampleRate:  int(s.sampleRate),
+		BitRateKbps: fileBitRateKbps(s.file, s.Duration()),
+		Channels:    int(s.channels),
+	}
+}
+
+func fileBitRateKbps(file *os.File, duration float64) int {
+	if file == nil {
+		return 0
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return 0
+	}
+	return averageBitRateKbps(stat.Size(), duration)
+}
+
+func averageBitRateKbps(bytes int64, duration float64) int {
+	if bytes <= 0 || duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return 0
+	}
+	return int(math.Round(float64(bytes) * 8 / duration / 1000))
 }

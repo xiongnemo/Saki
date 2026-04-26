@@ -45,6 +45,7 @@ type Service struct {
 	bufferedPct      float64
 	bufferPctKnown   bool
 	cacheReadyState  bool
+	audioInfo        models.AudioInfo
 	lastError        string
 	lastProgressEmit time.Time
 
@@ -132,6 +133,7 @@ func (s *Service) Play() {
 	if needsLoad {
 		track := s.playlist.Entries[0]
 		s.currentTrack = &track
+		s.audioInfo = track.AudioInfo()
 	}
 	trackID := ""
 	if s.currentTrack != nil {
@@ -181,6 +183,7 @@ func (s *Service) Next() {
 	s.currentTrack = &track
 	s.loadedTrackID = ""
 	s.cacheReadyState = false
+	s.audioInfo = track.AudioInfo()
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -205,6 +208,7 @@ func (s *Service) Previous() {
 	s.currentTrack = &track
 	s.loadedTrackID = ""
 	s.cacheReadyState = false
+	s.audioInfo = track.AudioInfo()
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -219,6 +223,7 @@ func (s *Service) SkipTo(index int) {
 	s.currentTrack = &track
 	s.loadedTrackID = ""
 	s.cacheReadyState = false
+	s.audioInfo = track.AudioInfo()
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -322,6 +327,7 @@ func (s *Service) reloadCachedCurrentForSeek(target, duration float64, resume bo
 	s.bufferedPct = 100
 	s.bufferPctKnown = true
 	s.cacheReadyState = true
+	s.audioInfo = s.audioInfo.WithFallback(track.AudioInfo())
 	s.lastError = ""
 	s.loadedTrackID = track.ID
 	s.currentTrack = &track
@@ -465,6 +471,7 @@ func (s *Service) loadPlaylistAt(playlist models.Playlist, track int) error {
 	s.currentTrack = &current
 	s.loadedTrackID = ""
 	s.cacheReadyState = false
+	s.audioInfo = current.AudioInfo()
 	s.shuffled = false
 	s.mu.Unlock()
 
@@ -483,6 +490,10 @@ func (s *Service) loadCurrentAndPlay() error {
 	if coverPath, err := s.cacheCoverArt(s.ctx, track); err == nil {
 		track.Image = coverPath
 	}
+
+	s.mu.Lock()
+	s.audioInfo = track.AudioInfo()
+	s.mu.Unlock()
 
 	s.mu.RLock()
 	source := s.source
@@ -508,6 +519,7 @@ func (s *Service) loadCurrentAndPlay() error {
 	s.bufferedPct = 0
 	s.bufferPctKnown = false
 	s.cacheReadyState = isLocal
+	s.audioInfo = s.audioInfo.WithFallback(track.AudioInfo())
 	s.lastProgressEmit = time.Time{}
 	if isLocal {
 		s.bufferedSec = float64(track.Duration)
@@ -591,6 +603,9 @@ func (s *Service) consumeAudioEvents() {
 			case audio.EventBufferProgress:
 				s.updateBufferState(event)
 				s.emitProgress(false)
+			case audio.EventFormat:
+				s.updateAudioInfo(event.AudioInfo)
+				s.emitProgress(true)
 			default:
 				s.emit()
 			}
@@ -640,6 +655,15 @@ func (s *Service) updateBufferState(event audio.Event) {
 	}
 }
 
+func (s *Service) updateAudioInfo(info models.AudioInfo) {
+	if info.Empty() {
+		return
+	}
+	s.mu.Lock()
+	s.audioInfo = info.WithFallback(s.audioInfo)
+	s.mu.Unlock()
+}
+
 func (s *Service) consumeMediaCommands() {
 	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
@@ -676,6 +700,7 @@ func (s *Service) handlePlaybackCompleted() {
 	s.currentTrack = &track
 	s.loadedTrackID = ""
 	s.cacheReadyState = false
+	s.audioInfo = track.AudioInfo()
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -713,12 +738,14 @@ func (s *Service) stateLocked() models.CurrentState {
 	index := s.currentIndexLocked()
 	var current *models.Song
 	cacheReady := s.cacheReadyState
+	audioInfo := s.audioInfo
 	if s.currentTrack != nil {
 		track := *s.currentTrack
 		current = &track
 		if !cacheReady && s.cacheReady != nil {
 			cacheReady = s.cacheReady(track.ID)
 		}
+		audioInfo = audioInfo.WithFallback(track.AudioInfo())
 	}
 	return models.CurrentState{
 		CurrentTrack:       current,
@@ -732,6 +759,7 @@ func (s *Service) stateLocked() models.CurrentState {
 		BufferedPercent:    s.bufferedPct,
 		BufferPercentKnown: s.bufferPctKnown,
 		CacheReady:         cacheReady,
+		AudioInfo:          audioInfo,
 		LastError:          s.lastError,
 		CurrentPlaylist:    s.playlist,
 		CurrentTrackIndex:  index,

@@ -149,6 +149,27 @@ func TestOpenStreamFallsBackToSecondEndpoint(t *testing.T) {
 	}
 }
 
+func TestMapSongPreservesAudioMetadata(t *testing.T) {
+	song := mapSong(songJSON{
+		ID:           "song-1",
+		Title:        "Song",
+		Suffix:       "flac",
+		ContentType:  "audio/flac",
+		BitRateKbps:  880,
+		BitDepth:     16,
+		SamplingRate: 44100,
+		ChannelCount: 2,
+	})
+
+	if song.Suffix != "flac" || song.BitRateKbps != 880 || song.BitDepth != 16 || song.SamplingRate != 44100 || song.ChannelCount != 2 {
+		t.Fatalf("song metadata not mapped: %#v", song)
+	}
+	info := song.AudioInfo()
+	if info.Codec != "FLAC" || info.BitRateKbps != 880 || info.BitDepth != 16 || info.SampleRate != 44100 || info.Channels != 2 {
+		t.Fatalf("song audio info = %#v", info)
+	}
+}
+
 func TestHealthCheckSwitchesToConsistentlyFasterEndpoint(t *testing.T) {
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(30 * time.Millisecond)

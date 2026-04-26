@@ -75,7 +75,7 @@ func playingRows(state models.CurrentState, message string, width int) []string 
 	rows = append(rows,
 		fmt.Sprintf("%s :: %s :: %s", track.Artist, track.Album, track.Title),
 		playingProgressLine(state.Position, duration, width),
-		fmt.Sprintf("%s  Vol %d%%  Repeat %s  Shuffle %s%s", bufferLabel(state), int(state.Volume*100), state.RepeatStatus, boolText(state.Shuffled), errorText),
+		fmt.Sprintf("%s  Vol %d%%  Repeat %s  Shuffle %s%s", playingLeftText(state, width), int(state.Volume*100), state.RepeatStatus, boolText(state.Shuffled), errorText),
 	)
 	return rows
 }
@@ -94,6 +94,41 @@ func drawPlayingStatus(screen tcell.Screen, x, y, width int, state models.Curren
 	if width <= 0 {
 		return
 	}
+	rightWidth := volumeStatusWidth(state.Volume)
+	leftLimit := width
+	if rightWidth+2 < width {
+		leftLimit = width - rightWidth - 2
+	}
+	leftSegments := playingLeftSegments(state, leftLimit)
+	leftWidth := segmentsWidth(leftSegments)
+	drawSegmentsClipped(screen, x, y, leftSegments, leftLimit)
+
+	centerSegments := []textSegment{
+		{text: "Repeat ", color: uiMuted},
+		{text: state.RepeatStatus.String(), color: uiAccent},
+		{text: "  Shuffle ", color: uiMuted},
+		{text: statusBoolText(state.Shuffled), color: uiAccent},
+	}
+	centerWidth := segmentsWidth(centerSegments)
+	centerX := x + (width-centerWidth)/2
+	if centerX < x+leftWidth+2 {
+		centerX = x + leftWidth + 2
+	}
+	if centerX+centerWidth <= x+width-rightWidth-2 {
+		drawSegments(screen, centerX, y, centerSegments)
+	}
+
+	drawVolumeStatus(screen, x, y, width, state.Volume)
+	if state.LastError != "" && width > leftWidth+2 {
+		errorX := x + leftWidth + 2
+		maxWidth := x + width - rightWidth - 2 - errorX
+		if maxWidth > 0 {
+			tview.Print(screen, state.LastError, errorX, y, maxWidth, tview.AlignLeft, uiDanger)
+		}
+	}
+}
+
+func playingLeftSegments(state models.CurrentState, maxWidth int) []textSegment {
 	leftState := "Ready"
 	stateColor := uiAccent
 	if state.Buffering {
@@ -116,33 +151,23 @@ func drawPlayingStatus(screen tcell.Screen, x, y, width int, state models.Curren
 		)
 	}
 
-	leftWidth := segmentsWidth(leftSegments)
-	drawSegments(screen, x, y, leftSegments)
+	remaining := maxWidth - segmentsWidth(leftSegments) - 2
+	if label := audioInfoLabel(state.AudioInfo, remaining); label != "" {
+		leftSegments = append(leftSegments,
+			textSegment{text: "  ", color: uiText},
+			textSegment{text: label, color: uiAccent},
+		)
+	}
+	return leftSegments
+}
 
-	centerSegments := []textSegment{
-		{text: "Repeat ", color: uiMuted},
-		{text: state.RepeatStatus.String(), color: uiAccent},
-		{text: "  Shuffle ", color: uiMuted},
-		{text: statusBoolText(state.Shuffled), color: uiAccent},
+func playingLeftText(state models.CurrentState, width int) string {
+	segments := playingLeftSegments(state, width)
+	var builder strings.Builder
+	for _, segment := range segments {
+		builder.WriteString(segment.text)
 	}
-	centerWidth := segmentsWidth(centerSegments)
-	centerX := x + (width-centerWidth)/2
-	rightWidth := volumeStatusWidth(state.Volume)
-	if centerX < x+leftWidth+2 {
-		centerX = x + leftWidth + 2
-	}
-	if centerX+centerWidth <= x+width-rightWidth-2 {
-		drawSegments(screen, centerX, y, centerSegments)
-	}
-
-	drawVolumeStatus(screen, x, y, width, state.Volume)
-	if state.LastError != "" && width > leftWidth+2 {
-		errorX := x + leftWidth + 2
-		maxWidth := x + width - rightWidth - 2 - errorX
-		if maxWidth > 0 {
-			tview.Print(screen, state.LastError, errorX, y, maxWidth, tview.AlignLeft, uiDanger)
-		}
-	}
+	return builder.String()
 }
 
 type textSegment struct {
@@ -166,6 +191,101 @@ func drawSegments(screen tcell.Screen, x, y int, segments []textSegment) {
 		tview.Print(screen, segment.text, x, y, len(segment.text), tview.AlignLeft, segment.color)
 		x += len(segment.text)
 	}
+}
+
+func drawSegmentsClipped(screen tcell.Screen, x, y int, segments []textSegment, maxWidth int) {
+	if maxWidth <= 0 {
+		return
+	}
+	used := 0
+	for _, segment := range segments {
+		if segment.text == "" {
+			continue
+		}
+		remaining := maxWidth - used
+		if remaining <= 0 {
+			return
+		}
+		text := segment.text
+		if len(text) > remaining {
+			text = text[:remaining]
+		}
+		tview.Print(screen, text, x+used, y, len(text), tview.AlignLeft, segment.color)
+		used += len(text)
+	}
+}
+
+func audioInfoLabel(info models.AudioInfo, maxWidth int) string {
+	if maxWidth <= 0 || info.Empty() {
+		return ""
+	}
+	codec := models.NormalizeAudioCodec(info.Codec)
+	depthRate := audioDepthRateLabel(info)
+	bitRate := audioBitRateLabel(info.BitRateKbps)
+	candidates := make([]string, 0, 4)
+	switch {
+	case codec != "" && depthRate != "" && bitRate != "":
+		candidates = append(candidates, codec+" "+depthRate+" "+bitRate)
+	case codec != "" && depthRate != "":
+		candidates = append(candidates, codec+" "+depthRate)
+	case codec != "" && bitRate != "":
+		candidates = append(candidates, codec+" "+bitRate)
+	case depthRate != "" && bitRate != "":
+		candidates = append(candidates, depthRate+" "+bitRate)
+	}
+	if codec != "" && depthRate != "" {
+		candidates = append(candidates, codec+" "+depthRate)
+	}
+	if codec != "" && bitRate != "" {
+		candidates = append(candidates, codec+" "+bitRate)
+	}
+	if codec != "" {
+		candidates = append(candidates, codec)
+	}
+	if depthRate != "" {
+		candidates = append(candidates, depthRate)
+	}
+	if bitRate != "" {
+		candidates = append(candidates, bitRate)
+	}
+	for _, candidate := range candidates {
+		if candidate != "" && len(candidate) <= maxWidth {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func audioDepthRateLabel(info models.AudioInfo) string {
+	rate := audioSampleRateLabel(info.SampleRate)
+	switch {
+	case info.BitDepth > 0 && rate != "":
+		return fmt.Sprintf("%d/%s", info.BitDepth, rate)
+	case info.BitDepth > 0:
+		return fmt.Sprintf("%dbit", info.BitDepth)
+	case rate != "":
+		return rate + "kHz"
+	default:
+		return ""
+	}
+}
+
+func audioSampleRateLabel(sampleRate int) string {
+	if sampleRate <= 0 {
+		return ""
+	}
+	if sampleRate%1000 == 0 {
+		return fmt.Sprintf("%d", sampleRate/1000)
+	}
+	value := float64(sampleRate) / 1000
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.1f", value), "0"), ".")
+}
+
+func audioBitRateLabel(bitRateKbps int) string {
+	if bitRateKbps <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dk", bitRateKbps)
 }
 
 func volumeStatusWidth(volume float64) int {
