@@ -9,7 +9,7 @@ Status: completed.
 - [x] At runtime on Windows, extract the embedded DLL to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll`, then load it from that stable cache path.
 - [x] Keep non-Windows media integration as no-op until Linux MPRIS or macOS Now Playing support is implemented.
 - [x] Add GitHub Actions release builds using native OS runners: `ubuntu-latest`, `macos-latest`, and `windows-latest`.
-- [x] On tag pushes, publish the built archives and `SHA256SUMS.txt` to a GitHub Release.
+- [x] Publish the built archives to a GitHub Release.
 - [x] On `windows-latest`, build `internal/mediaintegration/smtc_shim/windows/saki_smtc.dll` with MSVC/Windows SDK before `go build`.
 - [x] Do not require MSVC/`cl.exe` for non-Windows builds.
 - [x] Verify with `go test ./...` and `.\scripts\build-windows.ps1 -SkipTests -SkipSMTC`.

@@ -95,7 +95,7 @@ local proxy URLs.
 Pushes to `dev` build prerelease artifacts for Linux, Windows, and macOS. The
 workflow targets `amd64`, `arm64`, and `i686` for Linux and Windows, and
 `amd64` and `arm64` for macOS. Artifacts are published to a GitHub prerelease
-named like `v0.0.1-dev-06b7a4654205`, together with `SHA256SUMS.txt`.
+named like `v0.0.1-dev-06b7a4654205`.
 
 Each build embeds version metadata in this format:
 
