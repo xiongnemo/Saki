@@ -109,12 +109,12 @@ Windows builds embed `saki_smtc.dll` into the Go executable. At runtime, Saki
 extracts the embedded shim to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll` and
 loads it from that stable cache path.
 
-During development, build the shim under
-`internal/mediaintegration/smtc_shim/windows` with MSVC + Windows SDK before
-running `go run ./cmd/saki` on Windows, because the Windows-only Go embed source
-needs `saki_smtc.dll` at compile time. If embedded extraction fails, Saki still
-falls back to the executable directory, the working directory, the shim source
-directory, and finally `PATH`.
+During development, `go run ./cmd/saki` can start without a compiled shim, but
+Windows SMTC stays disabled unless `saki_smtc.dll` is available beside the
+executable, in the working directory, under
+`internal/mediaintegration/smtc_shim/windows`, or on `PATH`. Release builds use
+`scripts/build-windows.ps1`, which builds or reuses the shim and compiles with
+the `saki_embed_smtc` tag so the DLL is embedded into `saki.exe`.
 
 ## Libraries and Frameworks
 

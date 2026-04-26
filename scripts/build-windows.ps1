@@ -145,7 +145,7 @@ if (-not $SkipTests) {
 }
 
 $exePath = Join-Path $outDir 'saki.exe'
-& go build -trimpath -ldflags $versionLdFlags -o $exePath .\cmd\saki
+& go build -trimpath -tags saki_embed_smtc -ldflags $versionLdFlags -o $exePath .\cmd\saki
 if ($LASTEXITCODE -ne 0) {
     throw "go build failed with exit code $LASTEXITCODE."
 }

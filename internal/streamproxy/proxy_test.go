@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
@@ -101,6 +102,13 @@ func TestProxyPrunesLeastRecentlyUsedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(newPath, []byte("67890"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(oldPath, now.Add(-time.Minute), now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newPath, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := proxy.prune(); err != nil {

@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows && saki_embed_smtc
 
 package mediaintegration
 
