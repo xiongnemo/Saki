@@ -488,7 +488,7 @@ func newMP3Source(file *os.File, path string) (*mp3Source, error) {
 }
 
 func (s *mp3Source) Read(p []byte) (int, error) {
-	n, err := s.decoder.Read(p)
+	n, err := readPCMFull(p, s.decoder.Read)
 	s.posBytes += int64(n)
 	return n, err
 }
@@ -527,6 +527,26 @@ func (s *mp3Source) AudioInfo() models.AudioInfo {
 		Channels:    2,
 		BitRateKbps: fileBitRateKbps(s.file, s.Duration()),
 	}
+}
+
+func readPCMFull(p []byte, read func([]byte) (int, error)) (int, error) {
+	total := 0
+	for total < len(p) {
+		n, err := read(p[total:])
+		if n > 0 {
+			total += n
+		}
+		if err != nil {
+			if total > 0 && errors.Is(err, io.EOF) {
+				return total, nil
+			}
+			return total, err
+		}
+		if n == 0 {
+			return total, nil
+		}
+	}
+	return total, nil
 }
 
 type wavSource struct {

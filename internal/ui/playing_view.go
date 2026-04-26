@@ -220,21 +220,21 @@ func audioInfoLabel(info models.AudioInfo, maxWidth int) string {
 		return ""
 	}
 	codec := models.NormalizeAudioCodec(info.Codec)
-	depthRate := audioDepthRateLabel(info)
+	rateDepth := audioRateDepthLabel(info)
 	bitRate := audioBitRateLabel(info.BitRateKbps)
 	candidates := make([]string, 0, 4)
 	switch {
-	case codec != "" && depthRate != "" && bitRate != "":
-		candidates = append(candidates, codec+" "+depthRate+" "+bitRate)
-	case codec != "" && depthRate != "":
-		candidates = append(candidates, codec+" "+depthRate)
+	case codec != "" && rateDepth != "" && bitRate != "":
+		candidates = append(candidates, codec+" "+rateDepth+" "+bitRate)
+	case codec != "" && rateDepth != "":
+		candidates = append(candidates, codec+" "+rateDepth)
 	case codec != "" && bitRate != "":
 		candidates = append(candidates, codec+" "+bitRate)
-	case depthRate != "" && bitRate != "":
-		candidates = append(candidates, depthRate+" "+bitRate)
+	case rateDepth != "" && bitRate != "":
+		candidates = append(candidates, rateDepth+" "+bitRate)
 	}
-	if codec != "" && depthRate != "" {
-		candidates = append(candidates, codec+" "+depthRate)
+	if codec != "" && rateDepth != "" {
+		candidates = append(candidates, codec+" "+rateDepth)
 	}
 	if codec != "" && bitRate != "" {
 		candidates = append(candidates, codec+" "+bitRate)
@@ -242,8 +242,8 @@ func audioInfoLabel(info models.AudioInfo, maxWidth int) string {
 	if codec != "" {
 		candidates = append(candidates, codec)
 	}
-	if depthRate != "" {
-		candidates = append(candidates, depthRate)
+	if rateDepth != "" {
+		candidates = append(candidates, rateDepth)
 	}
 	if bitRate != "" {
 		candidates = append(candidates, bitRate)
@@ -256,11 +256,11 @@ func audioInfoLabel(info models.AudioInfo, maxWidth int) string {
 	return ""
 }
 
-func audioDepthRateLabel(info models.AudioInfo) string {
+func audioRateDepthLabel(info models.AudioInfo) string {
 	rate := audioSampleRateLabel(info.SampleRate)
 	switch {
 	case info.BitDepth > 0 && rate != "":
-		return fmt.Sprintf("%d/%s", info.BitDepth, rate)
+		return fmt.Sprintf("%s/%d", rate, info.BitDepth)
 	case info.BitDepth > 0:
 		return fmt.Sprintf("%dbit", info.BitDepth)
 	case rate != "":

@@ -81,3 +81,12 @@ Status: completed.
 - [x] Use the same computed base version in `scripts/build-windows.ps1` when no explicit version env is provided.
 - [x] Keep explicit `SAKI_BASE_VERSION` / `BASE_VERSION` overrides available for manual builds.
 - [x] Verify version formatting and existing tests.
+
+## Playing Format Order and MP3 Speed Check
+
+Status: completed.
+
+- [x] Show sample rate before bit depth in the Playing audio format badge.
+- [x] Inspect MP3 decode channel/frame-size assumptions for half-speed playback cases.
+- [x] Add focused tests for the badge label and any decoder fix.
+- [x] Verify with `go test ./...`.
