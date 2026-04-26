@@ -163,6 +163,7 @@ type CurrentState struct {
 	TotalBytes         int64
 	BufferedPercent    float64
 	BufferPercentKnown bool
+	CacheReady         bool
 	LastError          string
 	CurrentPlaylist    Playlist
 	CurrentTrackIndex  int

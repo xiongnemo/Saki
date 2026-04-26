@@ -22,12 +22,13 @@ type Service struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	client    *subsonic.Client
-	audio     audio.Backend
-	media     mediaintegration.MediaIntegration
-	streamURL func(string) string
-	source    func(context.Context, string) (string, error)
-	cacheRoot string
+	client     *subsonic.Client
+	audio      audio.Backend
+	media      mediaintegration.MediaIntegration
+	streamURL  func(string) string
+	source     func(context.Context, string) (string, error)
+	cacheReady func(string) bool
+	cacheRoot  string
 
 	mu               sync.RWMutex
 	playlist         models.Playlist
@@ -43,6 +44,7 @@ type Service struct {
 	totalBytes       int64
 	bufferedPct      float64
 	bufferPctKnown   bool
+	cacheReadyState  bool
 	lastError        string
 	lastProgressEmit time.Time
 
@@ -91,6 +93,12 @@ func (s *Service) SetStreamSourceResolver(resolver func(context.Context, string)
 	}
 	s.mu.Lock()
 	s.source = resolver
+	s.mu.Unlock()
+}
+
+func (s *Service) SetCacheReadyResolver(resolver func(string) bool) {
+	s.mu.Lock()
+	s.cacheReady = resolver
 	s.mu.Unlock()
 }
 
@@ -155,6 +163,10 @@ func (s *Service) Pause() {
 func (s *Service) Stop() {
 	_ = s.audio.Stop()
 	_ = s.media.SetPlaybackState(models.PlaybackStopped)
+	s.mu.Lock()
+	s.loadedTrackID = ""
+	s.cacheReadyState = false
+	s.mu.Unlock()
 	s.emit()
 }
 
@@ -168,6 +180,7 @@ func (s *Service) Next() {
 	track := s.playlist.Entries[nextIndex]
 	s.currentTrack = &track
 	s.loadedTrackID = ""
+	s.cacheReadyState = false
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -191,6 +204,7 @@ func (s *Service) Previous() {
 	track := s.playlist.Entries[index]
 	s.currentTrack = &track
 	s.loadedTrackID = ""
+	s.cacheReadyState = false
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -204,6 +218,7 @@ func (s *Service) SkipTo(index int) {
 	track := s.playlist.Entries[index]
 	s.currentTrack = &track
 	s.loadedTrackID = ""
+	s.cacheReadyState = false
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -306,6 +321,7 @@ func (s *Service) reloadCachedCurrentForSeek(target, duration float64, resume bo
 	s.totalBytes = 1
 	s.bufferedPct = 100
 	s.bufferPctKnown = true
+	s.cacheReadyState = true
 	s.lastError = ""
 	s.loadedTrackID = track.ID
 	s.currentTrack = &track
@@ -448,6 +464,7 @@ func (s *Service) loadPlaylistAt(playlist models.Playlist, track int) error {
 	current := playlist.Entries[track]
 	s.currentTrack = &current
 	s.loadedTrackID = ""
+	s.cacheReadyState = false
 	s.shuffled = false
 	s.mu.Unlock()
 
@@ -490,6 +507,7 @@ func (s *Service) loadCurrentAndPlay() error {
 	s.totalBytes = 0
 	s.bufferedPct = 0
 	s.bufferPctKnown = false
+	s.cacheReadyState = isLocal
 	s.lastProgressEmit = time.Time{}
 	if isLocal {
 		s.bufferedSec = float64(track.Duration)
@@ -657,6 +675,7 @@ func (s *Service) handlePlaybackCompleted() {
 	track := s.playlist.Entries[nextIndex]
 	s.currentTrack = &track
 	s.loadedTrackID = ""
+	s.cacheReadyState = false
 	s.mu.Unlock()
 	_ = s.loadCurrentAndPlay()
 }
@@ -693,9 +712,13 @@ func (s *Service) currentIndexLocked() int {
 func (s *Service) stateLocked() models.CurrentState {
 	index := s.currentIndexLocked()
 	var current *models.Song
+	cacheReady := s.cacheReadyState
 	if s.currentTrack != nil {
 		track := *s.currentTrack
 		current = &track
+		if !cacheReady && s.cacheReady != nil {
+			cacheReady = s.cacheReady(track.ID)
+		}
 	}
 	return models.CurrentState{
 		CurrentTrack:       current,
@@ -708,6 +731,7 @@ func (s *Service) stateLocked() models.CurrentState {
 		TotalBytes:         s.totalBytes,
 		BufferedPercent:    s.bufferedPct,
 		BufferPercentKnown: s.bufferPctKnown,
+		CacheReady:         cacheReady,
 		LastError:          s.lastError,
 		CurrentPlaylist:    s.playlist,
 		CurrentTrackIndex:  index,

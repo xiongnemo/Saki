@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/xiongnemo/saki/internal/audio"
 	"github.com/xiongnemo/saki/internal/config"
@@ -56,6 +57,10 @@ func main() {
 		}
 		return proxy.TrackURL(id), nil
 	})
+	musicPlayer.SetCacheReadyResolver(func(id string) bool {
+		_, ok := proxy.CachedPath(id)
+		return ok
+	})
 	musicPlayer.SetCacheRoot(cfg.Settings.CacheDir)
 	defer musicPlayer.Close()
 
@@ -64,16 +69,30 @@ func main() {
 	}
 
 	applyConfig := func(next models.Config) models.Config {
+		previousBackend := normalizeAudioBackend(cfg.Settings.AudioBackend)
 		next = config.WithDefaults(next)
 		next = client.Configure(next)
+		if previousBackend != normalizeAudioBackend(next.Settings.AudioBackend) {
+			musicPlayer.Stop()
+		}
 		audioBackend.SetSettings(next.Settings)
 		_ = proxy.UpdateSettings(next.Settings)
 		musicPlayer.SetCacheRoot(next.Settings.CacheDir)
+		cfg = next
 		return next
 	}
 
 	app := ui.New(ctx, cancel, cfgStore, cfg, client, musicPlayer, media, applyConfig)
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func normalizeAudioBackend(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "miniaudio", "mpv":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "auto"
 	}
 }

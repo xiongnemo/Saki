@@ -288,6 +288,9 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		}
 		a.goBack()
 		return nil
+	case tcell.KeyEscape:
+		a.goBack()
+		return nil
 	case tcell.KeyRight:
 		if a.handleQueueKey(event) {
 			return nil
@@ -448,7 +451,7 @@ func listItemAt(list *tview.List, x, y int) int {
 
 func acceptsTextInput(focus tview.Primitive) bool {
 	switch focus.(type) {
-	case *tview.InputField, *tview.Form, *tview.TextArea:
+	case *tview.InputField, *tview.TextArea:
 		return true
 	default:
 		return false
@@ -912,6 +915,10 @@ func (a *App) showSettings(push bool) {
 			a.goBack()
 		})
 
+	form.SetCancelFunc(func() {
+		a.goBack()
+	})
+	form.SetFocus(form.GetFormItemIndex("Audio backend"))
 	form.SetBorder(true)
 	setViewTitle(form, "Settings")
 	styleForm(form)
@@ -1231,11 +1238,13 @@ func bufferLabel(state models.CurrentState) string {
 	if state.Buffering {
 		prefix = "Buffering"
 	}
-	percent := "--%"
-	if state.BufferPercentKnown {
-		percent = fmt.Sprintf("%.0f%%", state.BufferedPercent)
+	if state.CacheReady {
+		return fmt.Sprintf("%s  Cached", prefix)
 	}
-	return fmt.Sprintf("%s  Download %s", prefix, percent)
+	if state.BufferPercentKnown {
+		return fmt.Sprintf("%s  Download %.0f%%", prefix, state.BufferedPercent)
+	}
+	return prefix
 }
 
 func boolText(v bool) string {

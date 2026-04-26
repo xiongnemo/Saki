@@ -387,7 +387,14 @@ func openPCMSource(ctx context.Context, request LoadRequest) (pcmSource, error) 
 		path = localPathFromFileURL(parsed)
 	}
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return newStreamingPCMSource(ctx, request)
+		source, err := newStreamingPCMSource(ctx, request)
+		if err == nil {
+			return source, nil
+		}
+		if errors.Is(err, errALACStreamRequiresRange) {
+			return newALACStreamingPCMSource(ctx, request)
+		}
+		return nil, err
 	}
 
 	file, err := os.Open(path)
@@ -409,6 +416,8 @@ func openPCMSource(ctx context.Context, request LoadRequest) (pcmSource, error) 
 		return newWAVSource(file, path)
 	case string(header[:4]) == "fLaC":
 		return newFLACSource(file, path)
+	case isMP4Header(header):
+		return newALACSource(file, path)
 	default:
 		return newMP3Source(file, path)
 	}

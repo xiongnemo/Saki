@@ -85,6 +85,23 @@ func TestBufferPercent(t *testing.T) {
 	}
 }
 
+func TestStateReportsCacheReadyForCurrentTrack(t *testing.T) {
+	service := New(subsonic.NewClient(nil), newFakeAudio(), newFakeMedia())
+	defer service.Close()
+
+	track := models.Song{ID: "s1", Title: "Song"}
+	service.mu.Lock()
+	service.currentTrack = &track
+	service.mu.Unlock()
+	service.SetCacheReadyResolver(func(id string) bool {
+		return id == "s1"
+	})
+
+	if !service.State().CacheReady {
+		t.Fatal("expected current track cache to be reported ready")
+	}
+}
+
 func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 	backend := newFakeAudio()
 	backend.playing = true
@@ -122,6 +139,9 @@ func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 	}
 	if !state.BufferPercentKnown || state.BufferedPercent != 100 || state.BufferedSeconds != 120 {
 		t.Fatalf("unexpected buffer state: %#v", state)
+	}
+	if !state.CacheReady {
+		t.Fatalf("expected cache ready after cached seek reload: %#v", state)
 	}
 }
 

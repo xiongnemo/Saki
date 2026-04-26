@@ -33,8 +33,14 @@ func TestBufferLabel(t *testing.T) {
 
 	state.Buffering = true
 	state.BufferPercentKnown = false
-	if got := bufferLabel(state); got != "Buffering  Download --%" {
+	if got := bufferLabel(state); got != "Buffering" {
 		t.Fatalf("unknown buffering label = %q", got)
+	}
+
+	state.Buffering = false
+	state.CacheReady = true
+	if got := bufferLabel(state); got != "Ready  Cached" {
+		t.Fatalf("cache-ready label = %q", got)
 	}
 }
 
@@ -206,6 +212,47 @@ func TestTextInputGetsBackspaceAndSpace(t *testing.T) {
 	space := tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)
 	if got := app.handleGlobalKey(space); got != space {
 		t.Fatal("space in input should pass through")
+	}
+}
+
+func TestEscapeGoesBackFromForm(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	called := false
+	app.history = []func(){func() { called = true }, func() {}}
+	app.app.SetFocus(tview.NewForm())
+
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); got != nil {
+		t.Fatal("escape should be handled globally")
+	}
+	if !called {
+		t.Fatal("expected escape to go back")
+	}
+}
+
+func TestSettingsStartsOnAudioBackend(t *testing.T) {
+	app := &App{
+		app:     tview.NewApplication(),
+		content: tview.NewPages(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+			Settings: models.Settings{
+				AudioBackend:               "miniaudio",
+				AudioCacheMaxBytes:         2048 * 1024 * 1024,
+				HealthCheckIntervalSeconds: 5,
+				EndpointSwitchThreshold:    0.3,
+			},
+		},
+	}
+	app.showSettings(false)
+	form, ok := app.contentFocus.(*tview.Form)
+	if !ok {
+		t.Fatalf("content focus = %T, want form", app.contentFocus)
+	}
+	form.Focus(func(p tview.Primitive) {
+		app.app.SetFocus(p)
+	})
+	if focus, ok := app.app.GetFocus().(*tview.DropDown); !ok || focus.GetLabel() != "Audio backend" {
+		t.Fatalf("settings focus = %T %[1]v, want Audio backend dropdown", app.app.GetFocus())
 	}
 }
 

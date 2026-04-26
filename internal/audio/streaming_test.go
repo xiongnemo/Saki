@@ -1,13 +1,18 @@
 package audio
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +148,70 @@ func TestStreamPCMBufferCapacity(t *testing.T) {
 	}
 }
 
+func TestStreamPCMDecoderDefersALACToRangeSource(t *testing.T) {
+	stream := "\x00\x00\x00\x18ftypM4A "
+	_, _, _, err := newStreamPCMDecoder(bufio.NewReader(strings.NewReader(stream)), 0)
+	if !errors.Is(err, errALACStreamRequiresRange) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenPCMSourceStreamsHTTPALACWithRange(t *testing.T) {
+	m4a := testALACM4A(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") == "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(m4a)
+			return
+		}
+		writeTestRange(t, w, m4a, r.Header.Get("Range"))
+	}))
+	defer server.Close()
+
+	source, err := openPCMSource(context.Background(), LoadRequest{
+		URI:             server.URL,
+		DurationSeconds: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+
+	streaming, ok := source.(*streamingPCMSource)
+	if !ok {
+		t.Fatalf("source type = %T, want *streamingPCMSource", source)
+	}
+	streaming.mu.RLock()
+	kind := streaming.kind
+	streaming.mu.RUnlock()
+	if kind != "alac" {
+		t.Fatalf("stream kind = %q, want alac", kind)
+	}
+
+	readPCMFromSource(t, source)
+	if err := source.SeekFrame(uint64(source.SampleRate() / 20)); err != nil {
+		t.Fatal(err)
+	}
+	readPCMFromSource(t, source)
+}
+
+func TestOpenPCMSourceHTTPALACRequiresRange(t *testing.T) {
+	m4a := testALACM4A(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(m4a)
+	}))
+	defer server.Close()
+
+	_, err := openPCMSource(context.Background(), LoadRequest{
+		URI:             server.URL,
+		DurationSeconds: 1,
+	})
+	if !errors.Is(err, ErrStreamSeekRequiresCache) {
+		t.Fatalf("error = %v, want ErrStreamSeekRequiresCache", err)
+	}
+}
+
 func testWAV(t *testing.T, seconds int, sampleRate int) []byte {
 	t.Helper()
 
@@ -165,6 +234,51 @@ func testWAV(t *testing.T, seconds int, sampleRate int) []byte {
 		_ = binary.Write(&buf, binary.LittleEndian, int16(i%1024))
 	}
 	return buf.Bytes()
+}
+
+func testALACM4A(t *testing.T) []byte {
+	t.Helper()
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not found")
+	}
+
+	dir := t.TempDir()
+	m4aPath := filepath.Join(dir, "tone.m4a")
+	cmd := exec.Command(ffmpeg,
+		"-hide_banner",
+		"-loglevel", "error",
+		"-y",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=0.25:sample_rate=44100",
+		"-c:a", "alac",
+		m4aPath,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(m4aPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func readPCMFromSource(t *testing.T, source pcmSource) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	buf := make([]byte, 4096)
+	for time.Now().Before(deadline) {
+		n, err := source.Read(buf)
+		if n > 0 {
+			return
+		}
+		if err != nil && !errors.Is(err, errBuffering) && !errors.Is(err, io.EOF) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for decoded PCM")
 }
 
 func parseTestRangeStart(header string) (int, error) {

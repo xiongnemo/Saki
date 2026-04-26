@@ -24,13 +24,15 @@ type Proxy struct {
 	client   *subsonic.Client
 	settings models.Settings
 
-	mu       sync.Mutex
-	inflight map[string]*sync.Mutex
-	server   *http.Server
-	listener net.Listener
-	baseURL  string
-	cacheDir string
-	maxBytes int64
+	mu        sync.Mutex
+	inflight  map[string]*sync.Mutex
+	cacheJobs map[string]struct{}
+	server    *http.Server
+	listener  net.Listener
+	baseURL   string
+	cacheDir  string
+	maxBytes  int64
+	ctx       context.Context
 }
 
 func New(client *subsonic.Client, settings models.Settings) *Proxy {
@@ -47,11 +49,12 @@ func New(client *subsonic.Client, settings models.Settings) *Proxy {
 		maxBytes = 2 * 1024 * 1024 * 1024
 	}
 	return &Proxy{
-		client:   client,
-		settings: settings,
-		inflight: make(map[string]*sync.Mutex),
-		cacheDir: filepath.Join(cacheDir, "audio"),
-		maxBytes: maxBytes,
+		client:    client,
+		settings:  settings,
+		inflight:  make(map[string]*sync.Mutex),
+		cacheJobs: make(map[string]struct{}),
+		cacheDir:  filepath.Join(cacheDir, "audio"),
+		maxBytes:  maxBytes,
 	}
 }
 
@@ -65,6 +68,9 @@ func (p *Proxy) Start(ctx context.Context) error {
 	}
 	p.listener = listener
 	p.baseURL = "http://" + listener.Addr().String()
+	p.mu.Lock()
+	p.ctx = ctx
+	p.mu.Unlock()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/stream/", p.handleStream)
 	p.server = &http.Server{Handler: mux}
@@ -191,6 +197,7 @@ func (p *Proxy) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
+		p.ensureCachedAsync(id)
 		p.proxyRange(w, r, id, rangeHeader)
 		return
 	}
@@ -209,6 +216,35 @@ func (p *Proxy) proxyRange(w http.ResponseWriter, r *http.Request, id string, ra
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (p *Proxy) ensureCachedAsync(id string) {
+	cachePath := p.cachePath(id)
+	if fileInfo, err := os.Stat(cachePath); err == nil && fileInfo.Size() > 0 {
+		_ = os.Chtimes(cachePath, time.Now(), time.Now())
+		return
+	}
+
+	p.mu.Lock()
+	if _, ok := p.cacheJobs[id]; ok {
+		p.mu.Unlock()
+		return
+	}
+	p.cacheJobs[id] = struct{}{}
+	ctx := p.ctx
+	p.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	go func() {
+		defer func() {
+			p.mu.Lock()
+			delete(p.cacheJobs, id)
+			p.mu.Unlock()
+		}()
+		_, _ = p.EnsureCached(ctx, id)
+	}()
 }
 
 func (p *Proxy) proxyAndCache(w http.ResponseWriter, r *http.Request, id string, cachePath string) {

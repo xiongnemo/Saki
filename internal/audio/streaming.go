@@ -27,6 +27,7 @@ const (
 
 var (
 	ErrStreamSeekRequiresCache = errors.New("stream seek is unavailable until the cached file is ready")
+	errALACStreamRequiresRange = errors.New("ALAC/M4A streams require a Range-capable source")
 	errBuffering               = errors.New("audio is buffering")
 	errStreamReplaced          = errors.New("audio stream replaced")
 )
@@ -86,6 +87,105 @@ func newStreamingPCMSource(ctx context.Context, request LoadRequest) (*streaming
 		return nil, err
 	}
 	return source, nil
+}
+
+func newALACStreamingPCMSource(ctx context.Context, request LoadRequest) (*streamingPCMSource, error) {
+	if request.URI == "" {
+		return nil, errors.New("empty stream URI")
+	}
+	source := &streamingPCMSource{
+		parent:     ctx,
+		request:    request,
+		httpClient: http.DefaultClient,
+	}
+	if err := source.openALACStream(0); err != nil {
+		return nil, err
+	}
+	return source, nil
+}
+
+func (s *streamingPCMSource) openALACStream(startFrame uint64) error {
+	ctx, cancel := context.WithCancel(s.parent)
+	reader, err := newHTTPRangeReadSeeker(ctx, s.request.URI, httpRangeWindowBytes)
+	if err != nil {
+		cancel()
+		if errors.Is(err, ErrStreamSeekRequiresCache) {
+			return ErrStreamSeekRequiresCache
+		}
+		return err
+	}
+
+	decoder, err := newALACStreamDecoder(reader)
+	if err != nil {
+		_ = reader.Close()
+		cancel()
+		return err
+	}
+
+	channels := decoder.Channels()
+	sampleRate := decoder.SampleRate()
+	frameBytes := int(channels) * 2
+	if channels == 0 || sampleRate == 0 || frameBytes == 0 {
+		_ = reader.Close()
+		cancel()
+		return errors.New("ALAC stream decoder returned invalid audio format")
+	}
+
+	duration := decoder.Duration()
+	if duration <= 0 {
+		duration = s.request.DurationSeconds
+	}
+	var lengthFrames uint64
+	if duration > 0 {
+		lengthFrames = uint64(duration * float64(sampleRate))
+	}
+	if lengthFrames > 0 && startFrame > lengthFrames {
+		startFrame = lengthFrames
+	}
+	actualFrame := startFrame
+	if startFrame > 0 {
+		actualFrame, err = decoder.SeekFrame(startFrame)
+		if err != nil {
+			_ = reader.Close()
+			cancel()
+			return err
+		}
+	}
+
+	ring := newPCMRingBuffer(streamPCMBufferCapacity(sampleRate, frameBytes, duration))
+	seq := s.sequence.Add(1)
+
+	s.mu.Lock()
+	oldCancel := s.cancel
+	oldBody := s.body
+	oldRing := s.ring
+	s.cancel = cancel
+	s.body = reader
+	s.ring = ring
+	s.kind = "alac"
+	s.wavInfo = nil
+	s.channels = channels
+	s.sampleRate = sampleRate
+	s.duration = duration
+	s.lengthFrames = lengthFrames
+	s.frameBytes = frameBytes
+	s.positionFrames.Store(actualFrame)
+	s.started.Store(false)
+	s.buffering.Store(true)
+	s.mu.Unlock()
+
+	if oldCancel != nil {
+		oldCancel()
+	}
+	if oldBody != nil {
+		_ = oldBody.Close()
+	}
+	if oldRing != nil {
+		oldRing.CloseWithError(errStreamReplaced)
+	}
+
+	go s.decodeLoop(seq, reader, decoder, ring)
+	return nil
 }
 
 func (s *streamingPCMSource) openStream(byteOffset int64, startFrame uint64, rawWAV *wavStreamInfo) error {
@@ -288,6 +388,12 @@ func (s *streamingPCMSource) SeekFrame(frame uint64) error {
 	if lengthFrames > 0 && frame > lengthFrames {
 		frame = lengthFrames
 	}
+	if kind == "alac" {
+		if frame == 0 {
+			s.everStarted.Store(false)
+		}
+		return s.openALACStream(frame)
+	}
 	if frame == 0 {
 		s.everStarted.Store(false)
 		return s.openStream(0, 0, nil)
@@ -425,6 +531,8 @@ func newStreamPCMDecoder(r *bufio.Reader, fallbackDuration float64) (streamPCMDe
 	case string(header[:4]) == "fLaC":
 		decoder, err := newFLACStreamDecoder(r, fallbackDuration)
 		return decoder, "flac", nil, err
+	case isMP4Header(header):
+		return nil, "", nil, errALACStreamRequiresRange
 	default:
 		decoder, err := newMP3StreamDecoder(r, fallbackDuration)
 		return decoder, "mp3", nil, err

@@ -94,23 +94,30 @@ func drawPlayingStatus(screen tcell.Screen, x, y, width int, state models.Curren
 	if width <= 0 {
 		return
 	}
-	leftPrefix := "Stream "
 	leftState := "Ready"
 	stateColor := uiAccent
 	if state.Buffering {
 		leftState = "Buffering"
 		stateColor = uiDanger
 	}
-	download := "--%"
-	if state.BufferPercentKnown {
-		download = fmt.Sprintf("%.0f%%", state.BufferedPercent)
+	leftSegments := []textSegment{
+		{text: "Stream ", color: uiMuted},
+		{text: leftState, color: stateColor},
 	}
-	leftSuffix := "  Download " + download
+	switch {
+	case state.CacheReady:
+		leftSegments = append(leftSegments,
+			textSegment{text: "  Cached", color: uiAccent},
+		)
+	case state.BufferPercentKnown:
+		leftSegments = append(leftSegments,
+			textSegment{text: "  Download ", color: uiText},
+			textSegment{text: fmt.Sprintf("%.0f%%", state.BufferedPercent), color: uiText},
+		)
+	}
 
-	leftWidth := len(leftPrefix) + len(leftState) + len(leftSuffix)
-	tview.Print(screen, leftPrefix, x, y, width, tview.AlignLeft, uiMuted)
-	tview.Print(screen, leftState, x+len(leftPrefix), y, max(0, width-len(leftPrefix)), tview.AlignLeft, stateColor)
-	tview.Print(screen, leftSuffix, x+len(leftPrefix)+len(leftState), y, max(0, width-len(leftPrefix)-len(leftState)), tview.AlignLeft, uiText)
+	leftWidth := segmentsWidth(leftSegments)
+	drawSegments(screen, x, y, leftSegments)
 
 	centerSegments := []textSegment{
 		{text: "Repeat ", color: uiMuted},

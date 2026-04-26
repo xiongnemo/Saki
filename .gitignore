@@ -9,6 +9,7 @@
 *.obj
 *.lib
 *.exp
+*.arch
 
 # Test binary, built with `go test -c`
 *.test

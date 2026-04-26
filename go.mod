@@ -1,6 +1,6 @@
 module github.com/xiongnemo/saki
 
-go 1.24.0
+go 1.25.7
 
 require (
 	github.com/BourgeoisBear/rasterm v1.1.2
@@ -9,6 +9,7 @@ require (
 	github.com/gen2brain/malgo v0.11.24
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/mewkiz/flac v1.0.13
+	github.com/mycophonic/saprobe-alac v1.0.0-rc2
 	github.com/rivo/tview v0.42.0
 )
 
@@ -19,7 +20,7 @@ require (
 	github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d // indirect
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/term v0.37.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/term v0.40.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )

@@ -24,7 +24,7 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Queue navigation with keyboard focus, mouse selection, and double-click playback.
 - Queue-side album cover preview with terminal image protocol support and color-block fallback.
 - Now Playing panel with progress, download/buffer status, repeat, shuffle, and volume controls.
-- Multiple playback backends: default `auto` tries miniaudio first for MP3/WAV/FLAC and falls back to optional `mpv` for formats such as ALAC/M4A.
+- Multiple playback backends: default `auto` tries miniaudio first for MP3/WAV/FLAC and Range-capable or completed-cache ALAC/M4A, then falls back to optional `mpv` for unsupported sources.
 - Local stream proxy with playback-time buffering and completed-file audio cache.
 - Seeking support when the current backend/source can provide a seekable stream or cached file.
 - Settings screen for endpoints, audio backend, cache size, endpoint health, and fallback behavior.
@@ -81,14 +81,14 @@ a working MinGW-w64/GCC toolchain. If you already have a built shim and only
 want to skip rebuilding it, pass `-SkipSMTC`.
 
 `mpv` is optional. Install it or set its path in Settings only when using the
-`mpv` backend or the `auto` fallback for formats outside miniaudio's current
-decoder set.
+`mpv` backend or the `auto` fallback for non-seekable or unsupported sources.
 
 ## Runtime Requirements
 
 The default miniaudio backend has no external runtime player dependency for
-MP3/WAV/FLAC. The optional mpv backend starts mpv with JSON IPC and feeds it
-local proxy URLs.
+MP3/WAV/FLAC and Range-capable or completed-cache ALAC/M4A files. The optional
+mpv backend starts mpv with JSON IPC and feeds it local proxy URLs, and remains
+available as a fallback for unsupported or non-Range-capable sources.
 
 ## Release Builds
 
@@ -127,5 +127,6 @@ the `saki_embed_smtc` tag so the DLL is embedded into `saki.exe`.
 - [mpv](https://mpv.io/) as an optional external playback backend and fallback.
 - [go-mp3](https://github.com/hajimehoshi/go-mp3) for MP3 decoding.
 - [mewkiz/flac](https://github.com/mewkiz/flac) for FLAC decoding.
+- [saprobe-alac](https://github.com/mycophonic/saprobe-alac) for ALAC/M4A decoding.
 - [rasterm](https://github.com/BourgeoisBear/rasterm) for terminal image protocol encoding.
 - [go-winio](https://github.com/microsoft/go-winio) for Windows named pipe support.

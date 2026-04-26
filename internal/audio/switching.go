@@ -30,6 +30,12 @@ func NewBackend(settings models.Settings) *SwitchingBackend {
 }
 
 func (b *SwitchingBackend) SetSettings(settings models.Settings) {
+	oldMode := normalizeBackendMode(b.settings.AudioBackend)
+	newMode := normalizeBackendMode(settings.AudioBackend)
+	if oldMode != newMode {
+		_ = b.Stop()
+		b.active = nil
+	}
 	b.settings = settings
 	b.mpv.SetSettings(settings)
 }
@@ -38,30 +44,38 @@ func (b *SwitchingBackend) Load(ctx context.Context, request LoadRequest) error 
 	mode := normalizeBackendMode(b.settings.AudioBackend)
 	switch mode {
 	case "miniaudio":
-		if err := b.miniaudio.Load(ctx, request); err != nil {
+		if err := b.loadWith(ctx, b.miniaudio, request); err != nil {
 			return err
 		}
-		b.active = b.miniaudio
 		return nil
 	case "mpv":
-		if err := b.mpv.Load(ctx, request); err != nil {
+		if err := b.loadWith(ctx, b.mpv, request); err != nil {
 			return err
 		}
-		b.active = b.mpv
 		return nil
 	default:
-		if err := b.miniaudio.Load(ctx, request); err == nil {
-			b.active = b.miniaudio
+		if err := b.loadWith(ctx, b.miniaudio, request); err == nil {
 			return nil
 		} else {
-			if mpvErr := b.mpv.Load(ctx, request); mpvErr == nil {
-				b.active = b.mpv
+			if mpvErr := b.loadWith(ctx, b.mpv, request); mpvErr == nil {
 				return nil
 			} else {
 				return fmt.Errorf("miniaudio failed: %v; mpv fallback failed: %w", err, mpvErr)
 			}
 		}
 	}
+}
+
+func (b *SwitchingBackend) loadWith(ctx context.Context, backend Backend, request LoadRequest) error {
+	if b.active != nil && b.active != backend {
+		_ = b.active.Stop()
+		b.active = nil
+	}
+	if err := backend.Load(ctx, request); err != nil {
+		return err
+	}
+	b.active = backend
+	return nil
 }
 
 func (b *SwitchingBackend) Play() error {
