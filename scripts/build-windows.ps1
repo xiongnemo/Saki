@@ -74,6 +74,7 @@ $smtcArch = switch ($targetGoArch) {
     'arm64' { 'arm64' }
     default { throw "Unsupported Windows GOARCH for SMTC shim: $targetGoArch" }
 }
+Write-Host "Windows build target: GOARCH=$targetGoArch CC=$cc"
 
 if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     $outDir = $OutputDir

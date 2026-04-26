@@ -78,7 +78,9 @@ jobs:
             goarch: amd64
             arch_label: amd64
             runner: windows-latest
-            cc: gcc
+            cc: C:\msys64\mingw64\bin\gcc.exe
+            cgo_cflags: ""
+            cgo_ldflags: ""
             msystem: MINGW64
             msys_packages: mingw-w64-x86_64-gcc
             mingw_path: C:\msys64\mingw64\bin
@@ -86,7 +88,9 @@ jobs:
             goarch: arm64
             arch_label: arm64
             runner: windows-11-arm
-            cc: clang
+            cc: C:\msys64\clangarm64\bin\clang.exe
+            cgo_cflags: -Wno-return-mismatch -Wno-dll-attribute-on-redeclaration
+            cgo_ldflags: ""
             msystem: CLANGARM64
             msys_packages: mingw-w64-clang-aarch64-clang
             mingw_path: C:\msys64\clangarm64\bin
@@ -94,7 +98,9 @@ jobs:
             goarch: 386
             arch_label: i686
             runner: windows-latest
-            cc: gcc
+            cc: C:\msys64\mingw32\bin\gcc.exe
+            cgo_cflags: ""
+            cgo_ldflags: ""
             msystem: MINGW32
             msys_packages: mingw-w64-i686-gcc
             mingw_path: C:\msys64\mingw32\bin
@@ -186,6 +192,8 @@ jobs:
           $env:GOARCH = '${{ matrix.goarch }}'
           $env:CGO_ENABLED = '1'
           $env:CC = '${{ matrix.cc }}'
+          $env:CGO_CFLAGS = '${{ matrix.cgo_cflags }}'
+          $env:CGO_LDFLAGS = '${{ matrix.cgo_ldflags }}'
           .\scripts\build-windows.ps1 -OutputDir "dist\$env:ARTIFACT_NAME" -SkipTests
           Compress-Archive -Path "dist\$env:ARTIFACT_NAME\*" -DestinationPath "dist\$env:ARTIFACT_NAME.zip" -Force
           "ARCHIVE_PATH=dist\$env:ARTIFACT_NAME.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
