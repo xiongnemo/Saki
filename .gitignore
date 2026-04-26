@@ -1,61 +1,33 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-.claude
-Reference
+# Native build artifacts
+*.obj
+*.lib
+*.exp
 
-library-references/
-AGENTS.md
-EXECUTION_LOG.md
-IMPLEMENTATION_PLAN.md
-DeepResearch.md
+# Test binary, built with `go test -c`
+*.test
 
-album.png
-tmp.png
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
 
-# Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
-bld/
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
+# Local build output
+dist/
 
-# .NET Core
-project.lock.json
-project.fragment.lock.json
-artifacts/
+# Dependency directories (remove the comment below to include it)
+vendor/
 
-# ASP.NET Scaffolding
-ScaffoldingReadMe.txt
+# Go workspace file
+go.work
+go.work.sum
 
-# NuGet Packages
-*.nupkg
-# NuGet Symbol Packages
-*.snupkg
-
-# dotenv environment variables file
+# Environment files
 .env
 
-# Others
-~$*
-*~
-CodeCoverage/
-
-# MSBuild Binary and Structured Log
-*.binlog
-
-# MSTest test Results
-[Tt]est[Rr]esult*/
-[Bb]uild[Ll]og.*
-
-# NUnit
-*.VisualState.xml
-TestResult.xml
-nunit-*.xml
+# Local archived source
+original/

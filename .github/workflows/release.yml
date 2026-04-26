@@ -1,0 +1,250 @@
+name: Release Builds
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+
+env:
+  BASE_VERSION: v0.0.1
+  GOPROXY: https://goproxy.cn,direct
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.arch_label }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            arch_label: amd64
+            runner: ubuntu-latest
+            cc: gcc
+            cgo_cflags: ""
+            cgo_ldflags: ""
+          - goos: linux
+            goarch: arm64
+            arch_label: arm64
+            runner: ubuntu-24.04-arm
+            cc: gcc
+            cgo_cflags: ""
+            cgo_ldflags: ""
+          - goos: linux
+            goarch: 386
+            arch_label: i686
+            runner: ubuntu-latest
+            cc: gcc
+            cgo_cflags: -m32
+            cgo_ldflags: -m32
+          - goos: darwin
+            goarch: amd64
+            arch_label: amd64
+            runner: macos-15-intel
+            cc: clang
+            cgo_cflags: ""
+            cgo_ldflags: ""
+          - goos: darwin
+            goarch: arm64
+            arch_label: arm64
+            runner: macos-latest
+            cc: clang
+            cgo_cflags: ""
+            cgo_ldflags: ""
+          - goos: windows
+            goarch: amd64
+            arch_label: amd64
+            runner: windows-latest
+            cc: gcc
+            msystem: MINGW64
+            msys_packages: mingw-w64-x86_64-gcc
+            mingw_path: C:\msys64\mingw64\bin
+          - goos: windows
+            goarch: arm64
+            arch_label: arm64
+            runner: windows-11-arm
+            cc: clang
+            msystem: CLANGARM64
+            msys_packages: mingw-w64-clang-aarch64-clang
+            mingw_path: C:\msys64\clangarm64\bin
+          - goos: windows
+            goarch: 386
+            arch_label: i686
+            runner: windows-latest
+            cc: gcc
+            msystem: MINGW32
+            msys_packages: mingw-w64-i686-gcc
+            mingw_path: C:\msys64\mingw32\bin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux i686 toolchain
+        if: matrix.goos == 'linux' && matrix.goarch == '386'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+
+      - name: Set up MinGW-w64 for cgo
+        if: matrix.goos == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: false
+          install: ${{ matrix.msys_packages }}
+
+      - name: Add MinGW-w64 to PATH
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: Add-Content -LiteralPath $env:GITHUB_PATH -Value '${{ matrix.mingw_path }}'
+
+      - id: meta
+        name: Compute build metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::12}"
+          branch="$(printf '%s' "${GITHUB_REF_NAME:-unknown}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')"
+          if [[ -z "$branch" ]]; then
+            branch="unknown"
+          fi
+          dirty="false"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            dirty="true"
+          fi
+          version="${BASE_VERSION}-${branch}-${short_sha}"
+          if [[ "$dirty" == "true" ]]; then
+            version="${version}-dirty"
+          fi
+          ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${BASE_VERSION} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty}"
+          artifact_name="saki-${version}-${{ matrix.goos }}-${{ matrix.arch_label }}"
+          {
+            echo "BRANCH_NAME=${branch}"
+            echo "SHORT_SHA=${short_sha}"
+            echo "DIRTY=${dirty}"
+            echo "SAKI_BASE_VERSION=${BASE_VERSION}"
+            echo "SAKI_VERSION_BRANCH=${branch}"
+            echo "SAKI_VERSION_COMMIT=${short_sha}"
+            echo "SAKI_VERSION_DIRTY=${dirty}"
+            echo "SAKI_VERSION=${version}"
+            echo "VERSION_LDFLAGS=${ldflags}"
+            echo "ARTIFACT_NAME=${artifact_name}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Unix artifact
+        if: matrix.goos != 'windows'
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          CC: ${{ matrix.cc }}
+          CGO_CFLAGS: ${{ matrix.cgo_cflags }}
+          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/${ARTIFACT_NAME}"
+          go build -trimpath -ldflags "${VERSION_LDFLAGS}" -o "dist/${ARTIFACT_NAME}/saki" ./cmd/saki
+          tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
+          echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Build Windows artifact
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $env:GOOS = 'windows'
+          $env:GOARCH = '${{ matrix.goarch }}'
+          $env:CGO_ENABLED = '1'
+          $env:CC = '${{ matrix.cc }}'
+          .\scripts\build-windows.ps1 -OutputDir "dist\$env:ARTIFACT_NAME" -SkipTests
+          Compress-Archive -Path "dist\$env:ARTIFACT_NAME\*" -DestinationPath "dist\$env:ARTIFACT_NAME.zip" -Force
+          "ARCHIVE_PATH=dist\$env:ARTIFACT_NAME.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARCHIVE_PATH }}
+          if-no-files-found: error
+
+  prerelease:
+    name: Publish Dev Prerelease
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - id: meta
+        name: Compute prerelease metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::12}"
+          branch="$(printf '%s' "${GITHUB_REF_NAME:-dev}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')"
+          if [[ -z "$branch" ]]; then
+            branch="dev"
+          fi
+          tag="${BASE_VERSION}-${branch}-${short_sha}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "name=Dev prerelease ${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: true
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            Automated prerelease build from `dev`.
+
+            Commit: `${{ github.sha }}`
