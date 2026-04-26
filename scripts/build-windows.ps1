@@ -39,7 +39,69 @@ function Format-VersionPart {
     return $part
 }
 
-$baseVersion = if ($env:SAKI_BASE_VERSION) { $env:SAKI_BASE_VERSION } elseif ($env:BASE_VERSION) { $env:BASE_VERSION } else { 'v0.0.1' }
+function Parse-SemVerTag {
+    param([string]$Value)
+
+    if ($Value -match '^v([0-9]+)\.([0-9]+)\.([0-9]+)$') {
+        return [pscustomobject]@{
+            Major = [int]$Matches[1]
+            Minor = [int]$Matches[2]
+            Patch = [int]$Matches[3]
+        }
+    }
+    return $null
+}
+
+function Resolve-BaseVersion {
+    if ($env:SAKI_BASE_VERSION) {
+        return $env:SAKI_BASE_VERSION
+    }
+    if ($env:BASE_VERSION) {
+        return $env:BASE_VERSION
+    }
+
+    $fallback = if ($env:BASE_VERSION_FALLBACK) { $env:BASE_VERSION_FALLBACK } else { 'v0.0.1' }
+    $fallbackParts = Parse-SemVerTag $fallback
+    if ($null -eq $fallbackParts) {
+        $fallback = 'v0.0.1'
+        $fallbackParts = Parse-SemVerTag $fallback
+    }
+
+    $bestTag = ''
+    $bestParts = $null
+    $bestCount = $null
+    $tagsOutput = Get-GitOutput @('tag', '--merged', 'HEAD', '--list', 'v*')
+    foreach ($tag in ($tagsOutput -split "\r?\n")) {
+        $tag = $tag.Trim()
+        $parts = Parse-SemVerTag $tag
+        if ($null -eq $parts) {
+            continue
+        }
+        $countText = Get-GitOutput @('rev-list', '--count', "$tag..HEAD")
+        $count = 0
+        if (-not [int]::TryParse($countText, [ref]$count)) {
+            continue
+        }
+        if ($null -eq $bestCount -or $count -lt $bestCount) {
+            $bestTag = $tag
+            $bestParts = $parts
+            $bestCount = $count
+        }
+    }
+
+    if ($bestTag) {
+        $patch = $bestParts.Patch + $bestCount
+        return "v$($bestParts.Major).$($bestParts.Minor).$patch"
+    }
+
+    $headCountText = Get-GitOutput @('rev-list', '--count', 'HEAD')
+    $headCount = 0
+    [void][int]::TryParse($headCountText, [ref]$headCount)
+    $fallbackPatch = $fallbackParts.Patch + $headCount
+    return "v$($fallbackParts.Major).$($fallbackParts.Minor).$fallbackPatch"
+}
+
+$baseVersion = Resolve-BaseVersion
 $branchSource = if ($env:SAKI_VERSION_BRANCH) { $env:SAKI_VERSION_BRANCH } else { Get-GitOutput @('rev-parse', '--abbrev-ref', 'HEAD') }
 $commitSource = if ($env:SAKI_VERSION_COMMIT) { $env:SAKI_VERSION_COMMIT } else { Get-GitOutput @('rev-parse', '--short=12', 'HEAD') }
 $branchName = Format-VersionPart $branchSource

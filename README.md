@@ -103,6 +103,16 @@ Each build embeds version metadata in this format:
 v{major}.{minor}.{patch}-{branch}-{commit12}[-dirty]
 ```
 
+For CI and build-script releases, `patch` is derived from Git history: the
+nearest exact `vMAJOR.MINOR.PATCH` tag plus the number of commits since that
+tag. If no exact release tag exists, builds use `v0.0.1` as the fallback base
+and add the current commit count.
+
+To bump `major` or `minor`, create an exact semver tag on the desired base
+commit, for example `v0.1.0`. That tagged commit builds as `v0.1.0-...`; the
+next commit builds as `v0.1.1-...`. Dev prerelease tags like
+`v0.0.1-dev-06b7a4654205` are ignored for the patch calculation.
+
 ## Windows SMTC Shim
 
 Windows builds embed `saki_smtc.dll` into the Go executable. At runtime, Saki

@@ -71,3 +71,13 @@ Status: completed.
 - [x] Render a compact codec/bit-depth/sample-rate/bitrate badge on the Playing status row.
 - [x] Keep the status row responsive so the badge does not overlap repeat/shuffle or volume controls.
 - [x] Verify with focused unit tests and `go test ./...`.
+
+## Commit-Derived Patch Versions
+
+Status: completed.
+
+- [x] Compute build base version from the nearest `vMAJOR.MINOR.PATCH` tag plus commit count.
+- [x] Use the computed base version in GitHub Actions artifacts and prerelease tags.
+- [x] Use the same computed base version in `scripts/build-windows.ps1` when no explicit version env is provided.
+- [x] Keep explicit `SAKI_BASE_VERSION` / `BASE_VERSION` overrides available for manual builds.
+- [x] Verify version formatting and existing tests.

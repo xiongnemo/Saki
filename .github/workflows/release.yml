@@ -7,7 +7,7 @@ on:
       - dev
 
 env:
-  BASE_VERSION: v0.0.1
+  BASE_VERSION_FALLBACK: v0.0.1
   GOPROXY: https://goproxy.cn,direct
 
 permissions:
@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -108,6 +110,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -152,6 +156,47 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          compute_base_version() {
+            if [[ -n "${SAKI_BASE_VERSION:-}" ]]; then
+              printf '%s\n' "${SAKI_BASE_VERSION}"
+              return
+            fi
+            if [[ -n "${BASE_VERSION:-}" ]]; then
+              printf '%s\n' "${BASE_VERSION}"
+              return
+            fi
+
+            local fallback="${BASE_VERSION_FALLBACK:-v0.0.1}"
+            local fallback_major=0 fallback_minor=0 fallback_patch=1
+            if [[ "${fallback}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              fallback_major="${BASH_REMATCH[1]}"
+              fallback_minor="${BASH_REMATCH[2]}"
+              fallback_patch="${BASH_REMATCH[3]}"
+            fi
+
+            local best_tag="" best_count=""
+            local tag count
+            while IFS= read -r tag; do
+              [[ "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
+              count="$(git rev-list --count "${tag}..HEAD" 2>/dev/null || true)"
+              [[ "${count}" =~ ^[0-9]+$ ]] || continue
+              if [[ -z "${best_count}" || "${count}" -lt "${best_count}" ]]; then
+                best_tag="${tag}"
+                best_count="${count}"
+              fi
+            done < <(git tag --merged HEAD --list 'v*' 2>/dev/null || true)
+
+            if [[ -n "${best_tag}" && "${best_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              printf 'v%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$((BASH_REMATCH[3] + best_count))"
+              return
+            fi
+
+            count="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+            [[ "${count}" =~ ^[0-9]+$ ]] || count=0
+            printf 'v%s.%s.%s\n' "${fallback_major}" "${fallback_minor}" "$((fallback_patch + count))"
+          }
+
+          base_version="$(compute_base_version)"
           short_sha="${GITHUB_SHA::12}"
           branch="$(printf '%s' "${GITHUB_REF_NAME:-unknown}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')"
           if [[ -z "$branch" ]]; then
@@ -161,17 +206,17 @@ jobs:
           if [[ -n "$(git status --porcelain)" ]]; then
             dirty="true"
           fi
-          version="${BASE_VERSION}-${branch}-${short_sha}"
+          version="${base_version}-${branch}-${short_sha}"
           if [[ "$dirty" == "true" ]]; then
             version="${version}-dirty"
           fi
-          ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${BASE_VERSION} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty}"
+          ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${base_version} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty}"
           artifact_name="saki-${version}-${{ matrix.goos }}-${{ matrix.arch_label }}"
           {
             echo "BRANCH_NAME=${branch}"
             echo "SHORT_SHA=${short_sha}"
             echo "DIRTY=${dirty}"
-            echo "SAKI_BASE_VERSION=${BASE_VERSION}"
+            echo "SAKI_BASE_VERSION=${base_version}"
             echo "SAKI_VERSION_BRANCH=${branch}"
             echo "SAKI_VERSION_COMMIT=${short_sha}"
             echo "SAKI_VERSION_DIRTY=${dirty}"
@@ -229,6 +274,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -241,12 +288,53 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          compute_base_version() {
+            if [[ -n "${SAKI_BASE_VERSION:-}" ]]; then
+              printf '%s\n' "${SAKI_BASE_VERSION}"
+              return
+            fi
+            if [[ -n "${BASE_VERSION:-}" ]]; then
+              printf '%s\n' "${BASE_VERSION}"
+              return
+            fi
+
+            local fallback="${BASE_VERSION_FALLBACK:-v0.0.1}"
+            local fallback_major=0 fallback_minor=0 fallback_patch=1
+            if [[ "${fallback}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              fallback_major="${BASH_REMATCH[1]}"
+              fallback_minor="${BASH_REMATCH[2]}"
+              fallback_patch="${BASH_REMATCH[3]}"
+            fi
+
+            local best_tag="" best_count=""
+            local tag count
+            while IFS= read -r tag; do
+              [[ "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
+              count="$(git rev-list --count "${tag}..HEAD" 2>/dev/null || true)"
+              [[ "${count}" =~ ^[0-9]+$ ]] || continue
+              if [[ -z "${best_count}" || "${count}" -lt "${best_count}" ]]; then
+                best_tag="${tag}"
+                best_count="${count}"
+              fi
+            done < <(git tag --merged HEAD --list 'v*' 2>/dev/null || true)
+
+            if [[ -n "${best_tag}" && "${best_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              printf 'v%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$((BASH_REMATCH[3] + best_count))"
+              return
+            fi
+
+            count="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+            [[ "${count}" =~ ^[0-9]+$ ]] || count=0
+            printf 'v%s.%s.%s\n' "${fallback_major}" "${fallback_minor}" "$((fallback_patch + count))"
+          }
+
+          base_version="$(compute_base_version)"
           short_sha="${GITHUB_SHA::12}"
           branch="$(printf '%s' "${GITHUB_REF_NAME:-dev}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')"
           if [[ -z "$branch" ]]; then
             branch="dev"
           fi
-          tag="${BASE_VERSION}-${branch}-${short_sha}"
+          tag="${base_version}-${branch}-${short_sha}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "name=Dev prerelease ${tag}" >> "$GITHUB_OUTPUT"
 
