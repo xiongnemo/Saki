@@ -507,12 +507,124 @@ func TestListMouseDoubleClickRunsEnterBehavior(t *testing.T) {
 	app.contentMouseLists = []*tview.List{list}
 
 	event := tcell.NewEventMouse(1, 2, tcell.ButtonNone, tcell.ModNone)
-	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftDoubleClick)
+	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftClick)
+	if nextEvent != nil {
+		t.Fatal("single click should be consumed")
+	}
+	if called != -1 {
+		t.Fatalf("single click selected index = %d, want no activation", called)
+	}
+	nextEvent, _ = app.handleMouseCapture(event, tview.MouseLeftDoubleClick)
 	if nextEvent != nil {
 		t.Fatal("double click should be consumed after dispatching Enter behavior")
 	}
 	if called != 1 {
 		t.Fatalf("selected index = %d, want 1", called)
+	}
+}
+
+func TestListMouseDoubleClickRequiresSamePriorItem(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true)
+	list.SetRect(0, 0, 20, 5)
+	called := -1
+	list.AddItem("one", "", 0, nil)
+	list.AddItem("two", "", 0, nil)
+	list.SetSelectedFunc(func(index int, _ string, _ string, _ rune) {
+		called = index
+	})
+	app.contentMouseLists = []*tview.List{list}
+
+	first := tcell.NewEventMouse(1, 1, tcell.ButtonNone, tcell.ModNone)
+	second := tcell.NewEventMouse(1, 2, tcell.ButtonNone, tcell.ModNone)
+	app.handleMouseCapture(first, tview.MouseLeftClick)
+	nextEvent, _ := app.handleMouseCapture(second, tview.MouseLeftDoubleClick)
+	if nextEvent != nil {
+		t.Fatal("double click should be consumed")
+	}
+	if called != -1 {
+		t.Fatalf("different-item double click activated index %d", called)
+	}
+	if got := list.GetCurrentItem(); got != 1 {
+		t.Fatalf("current item = %d, want selected second item", got)
+	}
+}
+
+func TestListMouseDoubleClickWithoutPriorClickDoesNotRunEnter(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true)
+	list.SetRect(0, 0, 20, 5)
+	called := -1
+	list.AddItem("one", "", 0, nil)
+	list.AddItem("two", "", 0, nil)
+	list.SetSelectedFunc(func(index int, _ string, _ string, _ rune) {
+		called = index
+	})
+	app.contentMouseLists = []*tview.List{list}
+
+	event := tcell.NewEventMouse(1, 2, tcell.ButtonNone, tcell.ModNone)
+	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftDoubleClick)
+	if nextEvent != nil {
+		t.Fatal("double click should be consumed")
+	}
+	if called != -1 {
+		t.Fatalf("double click without prior click activated index %d", called)
+	}
+	if got := list.GetCurrentItem(); got != 1 {
+		t.Fatalf("current item = %d, want selected second item", got)
+	}
+}
+
+func TestListMouseScrollMovesSelectionWithViewport(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	list := tview.NewList().ShowSecondaryText(false)
+	list.SetBorder(true)
+	list.SetRect(0, 0, 20, 5)
+	for i := 0; i < 10; i++ {
+		list.AddItem("item", "", 0, nil)
+	}
+	app.contentMouseLists = []*tview.List{list}
+
+	event := tcell.NewEventMouse(1, 2, tcell.ButtonNone, tcell.ModNone)
+	nextEvent, _ := app.handleMouseCapture(event, tview.MouseScrollDown)
+	if nextEvent != nil {
+		t.Fatal("scroll should be consumed")
+	}
+	if offset, _ := list.GetOffset(); offset != 1 {
+		t.Fatalf("offset after scroll down = %d, want 1", offset)
+	}
+	if got := list.GetCurrentItem(); got != 1 {
+		t.Fatalf("current item after scroll down = %d, want 1", got)
+	}
+	app.handleMouseCapture(event, tview.MouseScrollUp)
+	if offset, _ := list.GetOffset(); offset != 0 {
+		t.Fatalf("offset after scroll up = %d, want 0", offset)
+	}
+	if got := list.GetCurrentItem(); got != 0 {
+		t.Fatalf("current item after scroll up = %d, want 0", got)
+	}
+}
+
+func TestPassivePanelsDoNotTakeMouseFocus(t *testing.T) {
+	initial := tview.NewList()
+	app := &App{
+		app:    tview.NewApplication(),
+		status: newPlayingView(),
+		help:   tview.NewTextView(),
+	}
+	app.status.SetRect(0, 5, 20, 3)
+	app.help.SetRect(0, 8, 20, 3)
+	app.app.SetFocus(initial)
+
+	event := tcell.NewEventMouse(1, 9, tcell.ButtonNone, tcell.ModNone)
+	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftDown)
+	if nextEvent != nil {
+		t.Fatal("passive panel mouse down should be consumed")
+	}
+	if app.app.GetFocus() != initial {
+		t.Fatalf("focus = %T, want initial list", app.app.GetFocus())
 	}
 }
 
@@ -576,6 +688,15 @@ func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
 func TestControlsHelpMentionsViewSearch(t *testing.T) {
 	if !strings.Contains(controlsHelpText, "/ Search View") {
 		t.Fatalf("controls help missing view search shortcut: %q", controlsHelpText)
+	}
+	if !strings.Contains(controlsHelpText, "\n") {
+		t.Fatalf("controls help should be split into two lines: %q", controlsHelpText)
+	}
+	if !strings.Contains(controlsViewHelpText, "C-a Artists") || strings.Contains(controlsViewHelpText, "Play/Pause") {
+		t.Fatalf("view controls line is not view-specific: %q", controlsViewHelpText)
+	}
+	if !strings.Contains(controlsPlaybackHelpText, "Play/Pause") || strings.Contains(controlsPlaybackHelpText, "Artists") {
+		t.Fatalf("playback controls line is not playback-specific: %q", controlsPlaybackHelpText)
 	}
 }
 

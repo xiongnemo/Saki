@@ -38,8 +38,10 @@ var (
 )
 
 const (
-	playingPanelHeight = 5
-	controlsHelpText   = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | / Search View | C-s Settings | Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
+	playingPanelHeight       = 5
+	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | / Search View | C-s Settings"
+	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
+	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
 type appFocusTarget int
@@ -73,6 +75,9 @@ type App struct {
 	contentTabHandler func(back bool) bool
 	contentReturn     func(back bool) bool
 	contentMouseLists []*tview.List
+	lastClickList     *tview.List
+	lastClickIndex    int
+	lastClickAt       time.Time
 
 	historyMu sync.Mutex
 	history   []func()
@@ -208,6 +213,7 @@ func (a *App) showMain() {
 	a.status = newPlayingView()
 
 	a.help = tview.NewTextView().SetDynamicColors(true)
+	a.help.SetScrollable(false)
 	a.help.SetBorder(true)
 	setPlainTitle(a.help, "Controls")
 	a.help.SetText(controlsHelpText)
@@ -388,27 +394,40 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	list := a.listAt(event.Position())
-	if list == nil {
-		return event, action
-	}
-	switch action {
-	case tview.MouseLeftClick:
-		a.focusAndSelectListItem(list, event)
-		return nil, action
-	case tview.MouseLeftDoubleClick:
-		if selected := a.focusAndSelectListItem(list, event); selected {
-			if handler := list.InputHandler(); handler != nil {
-				handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
-					a.app.SetFocus(p)
-				})
+	if list != nil {
+		switch action {
+		case tview.MouseLeftClick:
+			if index := a.focusAndSelectListItem(list, event); index >= 0 {
+				a.lastClickList = list
+				a.lastClickIndex = index
+				a.lastClickAt = time.Now()
 			}
-		} else {
-			a.app.SetFocus(list)
+			return nil, action
+		case tview.MouseLeftDoubleClick:
+			index := a.focusAndSelectListItem(list, event)
+			if index >= 0 && a.confirmedDoubleClick(list, index) {
+				if handler := list.InputHandler(); handler != nil {
+					handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
+						a.app.SetFocus(p)
+					})
+				}
+				a.lastClickList = nil
+				a.lastClickAt = time.Time{}
+			}
+			return nil, action
+		case tview.MouseScrollUp:
+			a.scrollList(list, -1)
+			return nil, action
+		case tview.MouseScrollDown:
+			a.scrollList(list, 1)
+			return nil, action
 		}
-		return nil, action
-	default:
 		return event, action
 	}
+	if a.passivePanelAt(event.Position()) && consumesPassivePanelMouse(action) {
+		return nil, action
+	}
+	return event, action
 }
 
 func (a *App) listAt(x, y int) *tview.List {
@@ -423,14 +442,83 @@ func (a *App) listAt(x, y int) *tview.List {
 	return nil
 }
 
-func (a *App) focusAndSelectListItem(list *tview.List, event *tcell.EventMouse) bool {
+func (a *App) passivePanelAt(x, y int) bool {
+	if a.status != nil && a.status.InRect(x, y) {
+		return true
+	}
+	if a.help != nil && a.help.InRect(x, y) {
+		return true
+	}
+	return false
+}
+
+func consumesPassivePanelMouse(action tview.MouseAction) bool {
+	switch action {
+	case tview.MouseLeftDown, tview.MouseLeftUp, tview.MouseLeftClick, tview.MouseLeftDoubleClick,
+		tview.MouseScrollUp, tview.MouseScrollDown, tview.MouseScrollLeft, tview.MouseScrollRight:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) focusAndSelectListItem(list *tview.List, event *tcell.EventMouse) int {
 	a.app.SetFocus(list)
 	x, y := event.Position()
 	if index := listItemAt(list, x, y); index >= 0 {
 		list.SetCurrentItem(index)
-		return true
+		return index
 	}
-	return false
+	return -1
+}
+
+func (a *App) confirmedDoubleClick(list *tview.List, index int) bool {
+	return a.lastClickList == list &&
+		a.lastClickIndex == index &&
+		!a.lastClickAt.IsZero() &&
+		time.Since(a.lastClickAt) <= tview.DoubleClickInterval
+}
+
+func (a *App) scrollList(list *tview.List, delta int) {
+	if list == nil || list.GetItemCount() == 0 || delta == 0 {
+		return
+	}
+	a.app.SetFocus(list)
+	offset, horizontal := list.GetOffset()
+	_, _, _, height := list.GetInnerRect()
+	if height <= 0 {
+		height = 1
+	}
+	maxOffset := list.GetItemCount() - height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	nextOffset := offset + delta
+	if nextOffset < 0 {
+		nextOffset = 0
+	}
+	if nextOffset > maxOffset {
+		nextOffset = maxOffset
+	}
+
+	current := list.GetCurrentItem()
+	row := current - offset
+	if row < 0 {
+		row = 0
+	}
+	if row >= height {
+		row = height - 1
+	}
+	nextCurrent := nextOffset + row
+	if nextCurrent < 0 {
+		nextCurrent = 0
+	}
+	if nextCurrent >= list.GetItemCount() {
+		nextCurrent = list.GetItemCount() - 1
+	}
+
+	list.SetOffset(nextOffset, horizontal)
+	list.SetCurrentItem(nextCurrent)
 }
 
 func listItemAt(list *tview.List, x, y int) int {

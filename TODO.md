@@ -90,3 +90,13 @@ Status: completed.
 - [x] Inspect MP3 decode channel/frame-size assumptions for half-speed playback cases.
 - [x] Add focused tests for the badge label and any decoder fix.
 - [x] Verify with `go test ./...`.
+
+## Main UI Mouse and Controls Polish
+
+Status: completed.
+
+- [x] Make list double-click activation require the same prior clicked item.
+- [x] Make mouse wheel scrolling move the list selection with the viewport.
+- [x] Split Controls into view/navigation shortcuts and playback shortcuts.
+- [x] Keep Playing and Controls mouse-passive so they do not take focus.
+- [x] Verify with focused UI tests and `go test ./...`.
