@@ -131,3 +131,14 @@ Status: completed.
 - [x] Merge Properties into About and reduce System tabs to About and Settings.
 - [x] Add Left/Right tab switching between the two System tabs.
 - [x] Check README and verify with focused UI tests plus `go test ./...`.
+
+## System Popup Modal and About Polish
+
+Status: completed.
+
+- [x] Make System edit popups modal: ESC closes them and global navigation keys do not leak to lists/Queue.
+- [x] Replace Save/Back list rows with button-style controls in the Settings content.
+- [x] Keep save/ping messages compact so endpoint rows remain visible.
+- [x] Remove duplicate About fields and add useful static technical/runtime information.
+- [x] Update About wording with requested emoji and product expansion text.
+- [x] Verify with UI tests and `go test ./...`, then commit.

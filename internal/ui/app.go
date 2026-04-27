@@ -78,6 +78,7 @@ type App struct {
 	lastClickList     *tview.List
 	lastClickIndex    int
 	lastClickAt       time.Time
+	systemPopupCancel func()
 
 	historyMu sync.Mutex
 	history   []func()
@@ -238,6 +239,19 @@ func (a *App) queuePanel() tview.Primitive {
 }
 
 func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
+	if a.hasSystemEditPopup() {
+		switch event.Key() {
+		case tcell.KeyCtrlQ:
+			a.stop()
+			return nil
+		case tcell.KeyEscape:
+			a.closeSystemEditPopup()
+			return nil
+		default:
+			return event
+		}
+	}
+
 	textInputFocused := acceptsTextInput(a.app.GetFocus())
 	switch event.Key() {
 	case tcell.KeyCtrlQ:
@@ -399,6 +413,9 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 	if event == nil {
 		return nil, action
 	}
+	if a.hasSystemEditPopup() {
+		return event, action
+	}
 	list := a.listAt(event.Position())
 	if list != nil {
 		switch action {
@@ -434,6 +451,23 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	return event, action
+}
+
+func (a *App) hasSystemEditPopup() bool {
+	return a.pages != nil && a.pages.HasPage(systemEditPageName)
+}
+
+func (a *App) closeSystemEditPopup() {
+	if a.systemPopupCancel != nil {
+		cancel := a.systemPopupCancel
+		a.systemPopupCancel = nil
+		cancel()
+		return
+	}
+	if a.pages != nil {
+		a.pages.RemovePage(systemEditPageName)
+	}
+	a.focusContent()
 }
 
 func (a *App) listAt(x, y int) *tview.List {

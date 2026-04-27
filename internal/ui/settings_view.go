@@ -58,7 +58,9 @@ type settingsView struct {
 	tabRects         []settingsRect
 	contentRect      settingsRect
 	settingsListRect settingsRect
+	saveButtonRect   settingsRect
 	statusRect       settingsRect
+	saveFocused      bool
 
 	probeMu    sync.Mutex
 	probeSeq   int
@@ -211,14 +213,6 @@ func (v *settingsView) refreshSettingsList() {
 			return nil
 		})
 	})
-	v.settingsList.AddItem("Save settings", "", 0, func() {
-		v.save()
-	})
-	v.settingsList.AddItem("Back", "", 0, func() {
-		if v.app != nil {
-			v.app.goBack()
-		}
-	})
 	setListCurrentItem(v.settingsList, current)
 }
 
@@ -243,9 +237,9 @@ func (v *settingsView) Draw(screen tcell.Screen) {
 	if v.contentRect.width > 0 && v.contentRect.height > 0 {
 		switch v.activeTab {
 		case systemTabSettings:
-			v.settingsList.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
-			v.settingsListRect = v.contentRect
+			v.settingsList.SetRect(v.settingsListRect.x, v.settingsListRect.y, v.settingsListRect.width, v.settingsListRect.height)
 			v.settingsList.Draw(screen)
+			v.drawSaveButton(screen)
 		default:
 			v.content.SetText(v.aboutText())
 			v.content.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
@@ -280,8 +274,20 @@ func (v *settingsView) layout(x, y, width, height int) {
 	v.contentRect = settingsRect{x: x, y: contentY, width: width, height: contentHeight}
 	if v.activeTab == systemTabSettings {
 		v.settingsListRect = v.contentRect
+		v.saveButtonRect = settingsRect{}
+		if contentHeight > 1 {
+			buttonText := " Save "
+			buttonWidth := len(buttonText)
+			v.saveButtonRect = settingsRect{x: x, y: contentY + contentHeight - 1, width: buttonWidth, height: 1}
+			listHeight := contentHeight - 2
+			if listHeight < 1 {
+				listHeight = 1
+			}
+			v.settingsListRect = settingsRect{x: x, y: contentY, width: width, height: listHeight}
+		}
 	} else {
 		v.settingsListRect = settingsRect{}
+		v.saveButtonRect = settingsRect{}
 	}
 }
 
@@ -324,8 +330,23 @@ func drawPlainText(screen tcell.Screen, x, y int, text string, style tcell.Style
 	}
 }
 
+func (v *settingsView) drawSaveButton(screen tcell.Screen) {
+	if v.saveButtonRect.width <= 0 || v.saveButtonRect.height <= 0 {
+		return
+	}
+	style := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent)
+	if v.saveFocused {
+		style = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiTitle).Bold(true)
+	}
+	drawPlainText(screen, v.saveButtonRect.x, v.saveButtonRect.y, " Save ", style)
+}
+
 func (v *settingsView) Focus(delegate func(p tview.Primitive)) {
 	if v.activeTab == systemTabSettings {
+		if v.saveFocused {
+			v.Box.Focus(delegate)
+			return
+		}
 		v.settingsList.Focus(delegate)
 		return
 	}
@@ -342,6 +363,13 @@ func (v *settingsView) InputHandler() func(event *tcell.EventKey, setFocus func(
 			return
 		}
 		if v.activeTab == systemTabSettings {
+			if v.saveFocused {
+				v.handleSaveButtonKey(event, setFocus)
+				return
+			}
+			if v.handleSettingsListKey(event, setFocus) {
+				return
+			}
 			if handler := v.settingsList.InputHandler(); handler != nil {
 				handler(event, setFocus)
 			}
@@ -351,6 +379,31 @@ func (v *settingsView) InputHandler() func(event *tcell.EventKey, setFocus func(
 			handler(event, setFocus)
 		}
 	})
+}
+
+func (v *settingsView) handleSettingsListKey(event *tcell.EventKey, setFocus func(p tview.Primitive)) bool {
+	switch event.Key() {
+	case tcell.KeyTab:
+		v.focusSaveButton(setFocus)
+		return true
+	case tcell.KeyDown:
+		if v.settingsList.GetItemCount() > 0 && v.settingsList.GetCurrentItem() >= v.settingsList.GetItemCount()-1 {
+			v.focusSaveButton(setFocus)
+			return true
+		}
+	}
+	return false
+}
+
+func (v *settingsView) handleSaveButtonKey(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
+	switch event.Key() {
+	case tcell.KeyEnter:
+		v.save()
+	case tcell.KeyBacktab, tcell.KeyUp:
+		v.focusSettingsList(setFocus)
+	case tcell.KeyTab, tcell.KeyDown:
+		v.focusSettingsList(setFocus)
+	}
 }
 
 func (v *settingsView) handleTabShortcut(event *tcell.EventKey, setFocus func(p tview.Primitive)) bool {
@@ -390,9 +443,25 @@ func (v *settingsView) setActiveTab(tab systemTab, setFocus func(tview.Primitive
 	}
 	v.activeTab = tab
 	if tab == systemTabSettings {
-		v.settingsList.Focus(setFocus)
+		if v.saveFocused {
+			v.Box.Focus(setFocus)
+		} else {
+			v.settingsList.Focus(setFocus)
+		}
 		return
 	}
+	setFocus(v)
+}
+
+func (v *settingsView) focusSettingsList(setFocus func(tview.Primitive)) {
+	v.saveFocused = false
+	applyListFocusStyle(v.settingsList, true)
+	v.settingsList.Focus(setFocus)
+}
+
+func (v *settingsView) focusSaveButton(setFocus func(tview.Primitive)) {
+	v.saveFocused = true
+	applyListFocusStyle(v.settingsList, false)
 	setFocus(v)
 }
 
@@ -424,13 +493,27 @@ func (v *settingsView) MouseHandler() func(action tview.MouseAction, event *tcel
 		if v.activeTab == systemTabSettings && v.settingsListRect.contains(x, y) {
 			switch action {
 			case tview.MouseScrollUp:
+				v.saveFocused = false
 				v.moveSettingsSelection(-1, wrappedSetFocus)
 				return true, nil
 			case tview.MouseScrollDown:
+				v.saveFocused = false
 				v.moveSettingsSelection(1, wrappedSetFocus)
 				return true, nil
 			case tview.MouseLeftDown, tview.MouseLeftClick:
+				v.saveFocused = false
 				v.selectSettingsRow(y, wrappedSetFocus)
+				return true, nil
+			}
+		}
+		if v.activeTab == systemTabSettings && v.saveButtonRect.contains(x, y) {
+			switch action {
+			case tview.MouseLeftDown:
+				v.focusSaveButton(wrappedSetFocus)
+				return true, nil
+			case tview.MouseLeftClick:
+				v.focusSaveButton(wrappedSetFocus)
+				v.save()
 				return true, nil
 			}
 		}
@@ -527,7 +610,7 @@ func (v *settingsView) openInputPopup(title, label, value string, fieldWidth int
 	setPlainTitle(form, title)
 	form.SetFocus(0)
 	width := settingsClampInt(fieldWidth+26, 40, 100)
-	v.showPopup(form, width, 7)
+	v.showPopup(form, width, 7, cancel)
 }
 
 func (v *settingsView) openChoicePopup(label string, options []string, current int, accept func(int) error) {
@@ -561,11 +644,17 @@ func (v *settingsView) openChoicePopup(label string, options []string, current i
 	form.SetTitleColor(uiTitle)
 	setPlainTitle(form, "Choose "+label)
 	form.SetFocus(0)
-	v.showPopup(form, 52, 7)
+	v.showPopup(form, 52, 7, nil)
 }
 
-func (v *settingsView) showPopup(item tview.Primitive, width, height int) {
+func (v *settingsView) showPopup(item tview.Primitive, width, height int, cancel func()) {
 	v.app.pages.RemovePage(systemEditPageName)
+	v.app.systemPopupCancel = func() {
+		if cancel != nil {
+			cancel()
+		}
+		v.closePopup()
+	}
 	v.app.pages.AddPage(systemEditPageName, center(item, width, height), true, true)
 	if v.app.app != nil {
 		v.app.app.SetFocus(item)
@@ -575,11 +664,13 @@ func (v *settingsView) showPopup(item tview.Primitive, width, height int) {
 func (v *settingsView) closePopup() {
 	if v.app != nil && v.app.pages != nil {
 		v.app.pages.RemovePage(systemEditPageName)
+		v.app.systemPopupCancel = nil
 	}
 	if v.app != nil && v.app.app != nil {
-		v.settingsList.Focus(func(p tview.Primitive) {
-			v.app.app.SetFocus(p)
-		})
+		v.saveFocused = false
+		v.app.focusTarget = appFocusContent
+		v.app.contentFocus = v.settingsList
+		v.app.app.SetFocus(v.settingsList)
 	}
 }
 
@@ -726,20 +817,30 @@ func (v *settingsView) setStatusText(text string) {
 
 func (v *settingsView) statusText(message string, endpoints []models.Endpoint, probes []subsonic.EndpointProbe, checking bool, fallback string) string {
 	var builder strings.Builder
-	if message != "" {
-		builder.WriteString("[::b]")
-		builder.WriteString(tview.Escape(message))
-		builder.WriteString("[-]\n")
-	}
 	if fallback != "" {
+		if message != "" {
+			builder.WriteString("[::b]")
+			builder.WriteString(tview.Escape(message))
+			builder.WriteString("[-] ")
+		}
 		builder.WriteString(tview.Escape(fallback))
 		return strings.TrimRight(builder.String(), "\n")
 	}
 	if len(endpoints) == 0 {
+		if message != "" {
+			builder.WriteString("[::b]")
+			builder.WriteString(tview.Escape(message))
+			builder.WriteString("[-] ")
+		}
 		builder.WriteString("No endpoints configured.")
 		return strings.TrimRight(builder.String(), "\n")
 	}
 	if checking {
+		if message != "" {
+			builder.WriteString("[::b]")
+			builder.WriteString(tview.Escape(message))
+			builder.WriteString("[-] ")
+		}
 		builder.WriteString("Checking endpoints...")
 		return strings.TrimRight(builder.String(), "\n")
 	}
@@ -748,7 +849,21 @@ func (v *settingsView) statusText(message string, endpoints []models.Endpoint, p
 	if v.app != nil && v.app.client != nil {
 		activeURL = strings.TrimRight(v.app.client.ActiveEndpoint().URL, "/")
 	}
+	if len(probes) == 0 {
+		if message != "" {
+			builder.WriteString("[::b]")
+			builder.WriteString(tview.Escape(message))
+			builder.WriteString("[-]")
+		}
+		return strings.TrimRight(builder.String(), "\n")
+	}
 	for _, probe := range probes {
+		if message != "" {
+			builder.WriteString("[::b]")
+			builder.WriteString(tview.Escape(message))
+			builder.WriteString("[-] | ")
+			message = ""
+		}
 		mark := " "
 		if activeURL != "" && strings.TrimRight(probe.Endpoint.URL, "/") == activeURL {
 			mark = "*"
@@ -792,13 +907,7 @@ func (v *settingsView) identityStatusText(message string, identities []subsonic.
 }
 
 func (v *settingsView) aboutText() string {
-	endpoint := "Not connected"
-	if v.app != nil && v.app.client != nil {
-		if active := v.app.client.ActiveEndpoint(); active.URL != "" {
-			endpoint = active.URL
-		}
-	}
-	return fmt.Sprintf("This is Saki %s\nMade with music by Nemo Xiong\nRepository: https://github.com/xiongnemo/Saki\n\nConnected endpoint:\n%s\n\nProperties\n%s", version.String(), endpoint, v.propertiesText())
+	return fmt.Sprintf("This is Saki %s (Subsonic Audio Klient for Individuals).\nMade with 🎵&❤ by Nemo Xiong.\nRepository: https://github.com/xiongnemo/Saki\n\nProperties\n%s", version.String(), v.propertiesText())
 }
 
 func (v *settingsView) propertiesText() string {
@@ -834,22 +943,11 @@ func (v *settingsView) propertiesText() string {
 	writeProperty("Audio cache limit", formatBytes(v.cfg.Settings.AudioCacheMaxBytes))
 	writeProperty("Health interval", fmt.Sprintf("%ds", v.cfg.Settings.HealthCheckIntervalSeconds))
 	writeProperty("OS/Arch", runtime.GOOS+"/"+runtime.GOARCH)
-
-	builder.WriteByte('\n')
-	state := models.CurrentState{}
-	if v.app != nil && v.app.player != nil {
-		state = v.app.player.State()
-	}
-	if state.CurrentTrack == nil {
-		builder.WriteString("No track loaded")
-		return strings.TrimRight(builder.String(), "\n")
-	}
-	writeProperty("Current track", state.CurrentTrack.Artist+" :: "+state.CurrentTrack.Album+" :: "+state.CurrentTrack.Title)
-	if label := audioInfoLabel(state.AudioInfo, 80); label != "" {
-		writeProperty("Audio input", label)
-	} else {
-		writeProperty("Audio input", "Unknown")
-	}
+	writeProperty("Input decoders", "MP3, WAV PCM/float, FLAC, ALAC/M4A")
+	writeProperty("Streaming support", "HTTP Range, local proxy cache, mpv fallback")
+	writeProperty("Audio output", "miniaudio default device, signed 16-bit PCM")
+	writeProperty("Cover renderers", "Kitty, iTerm2, Sixel, cell fallback")
+	writeProperty("Cover mode", fallbackText(os.Getenv("SAKI_COVER_RENDERER"), "auto"))
 	return strings.TrimRight(builder.String(), "\n")
 }
 

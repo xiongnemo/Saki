@@ -271,6 +271,12 @@ func TestSettingsStartsOnList(t *testing.T) {
 	if got, _ := list.GetItemText(0); !strings.Contains(got, "Endpoints") {
 		t.Fatalf("first settings row = %q, want Endpoints", got)
 	}
+	for i := 0; i < list.GetItemCount(); i++ {
+		text, _ := list.GetItemText(i)
+		if text == "Save settings" || text == "Back" {
+			t.Fatalf("settings action %q should not be a list row", text)
+		}
+	}
 }
 
 func TestSettingsKeepsTabInsideSystem(t *testing.T) {
@@ -359,9 +365,14 @@ func TestSystemAboutIncludesProperties(t *testing.T) {
 
 	view.setActiveTab(systemTabAbout, func(p tview.Primitive) { app.app.SetFocus(p) })
 	about := view.aboutText()
-	for _, want := range []string{"This is Saki", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Properties", "Config path", "Username", "Audio backend", "OS/Arch", "No track loaded"} {
+	for _, want := range []string{"This is Saki", "Subsonic Audio Klient for Individuals", "🎵&❤", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Properties", "Config path", "Username", "Audio backend", "OS/Arch", "Input decoders", "Audio output"} {
 		if !strings.Contains(about, want) {
 			t.Fatalf("about text missing %q: %q", want, about)
+		}
+	}
+	for _, unwanted := range []string{"Connected endpoint:", "Current track", "Audio input", "No track loaded"} {
+		if strings.Contains(about, unwanted) {
+			t.Fatalf("about text contains removed field %q: %q", unwanted, about)
 		}
 	}
 }
@@ -416,6 +427,43 @@ func TestSettingsEnterOpensEditPopup(t *testing.T) {
 	name, _ := app.pages.GetFrontPage()
 	if name != systemEditPageName {
 		t.Fatalf("front page = %q, want edit popup", name)
+	}
+}
+
+func TestSystemPopupBlocksGlobalNavigationAndEscapeCloses(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		queue: tview.NewList(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		},
+	}
+	app.queue.AddItem("one", "", 0, nil)
+	app.queue.AddItem("two", "", 0, nil)
+	app.queue.SetCurrentItem(0)
+	view := newSettingsView(app, app.cfg)
+	app.contentFocus = view.settingsList
+	app.focusTarget = appFocusQueue
+	app.pages.AddPage("main", view, true, true)
+	view.openEndpointPopup()
+
+	down := tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
+	if got := app.handleGlobalKey(down); got != down {
+		t.Fatalf("popup should pass down to focused popup, got %v", got)
+	}
+	if current := app.queue.GetCurrentItem(); current != 0 {
+		t.Fatalf("queue moved behind popup to %d", current)
+	}
+
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); got != nil {
+		t.Fatalf("escape should close popup, got %v", got)
+	}
+	if app.pages.HasPage(systemEditPageName) {
+		t.Fatal("popup page still exists after escape")
+	}
+	if app.app.GetFocus() != view.settingsList {
+		t.Fatalf("focus after popup close = %T, want settings list", app.app.GetFocus())
 	}
 }
 
