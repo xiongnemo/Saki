@@ -120,3 +120,14 @@ Status: completed.
 - [x] Add library fingerprint validation before saving multiple endpoints.
 - [x] Add About and read-only runtime Properties content.
 - [x] Verify layout, navigation, validation, and existing regressions.
+
+## System Popup Settings Editing
+
+Status: completed.
+
+- [x] Replace inline Settings form editing with a selectable settings list.
+- [x] Open an edit or choice popup with Enter for each setting.
+- [x] Keep Endpoint Ping refreshing live while the endpoint popup text changes.
+- [x] Merge Properties into About and reduce System tabs to About and Settings.
+- [x] Add Left/Right tab switching between the two System tabs.
+- [x] Check README and verify with focused UI tests plus `go test ./...`.

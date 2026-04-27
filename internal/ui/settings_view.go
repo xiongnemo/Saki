@@ -24,29 +24,17 @@ const (
 	settingsProbeTimeout = 5 * time.Second
 	systemMinPingHeight  = 3
 	systemMaxPingHeight  = 8
+	systemEditPageName   = "system-edit"
 )
-
-var settingsPreferredFieldWidths = map[string]int{
-	"Endpoints (; separated)": 72,
-	"Audio backend":           10,
-	"MPV path":                72,
-	"Cache dir":               72,
-	"Audio cache MB":          12,
-	"Health interval sec":     8,
-	"Switch threshold":        8,
-	"Prefetch":                3,
-	"Bundled mpv":             3,
-}
 
 type systemTab int
 
 const (
 	systemTabAbout systemTab = iota
 	systemTabSettings
-	systemTabProperties
 )
 
-var systemTabLabels = []string{"About", "Settings", "Properties"}
+var systemTabLabels = []string{"About", "Settings"}
 
 type settingsRect struct {
 	x, y, width, height int
@@ -59,18 +47,18 @@ func (r settingsRect) contains(x, y int) bool {
 type settingsView struct {
 	*tview.Box
 
-	app      *App
-	form     *tview.Form
-	content  *tview.TextView
-	status   *tview.TextView
-	cfg      models.Config
-	settings models.Settings
+	app          *App
+	settingsList *tview.List
+	content      *tview.TextView
+	status       *tview.TextView
+	cfg          models.Config
+	settings     models.Settings
 
-	activeTab   systemTab
-	tabRects    []settingsRect
-	contentRect settingsRect
-	formRect    settingsRect
-	statusRect  settingsRect
+	activeTab        systemTab
+	tabRects         []settingsRect
+	contentRect      settingsRect
+	settingsListRect settingsRect
+	statusRect       settingsRect
 
 	probeMu    sync.Mutex
 	probeSeq   int
@@ -117,69 +105,129 @@ func newSettingsView(app *App, cfg models.Config) *settingsView {
 	view.status.SetTitleColor(uiTitle)
 	setPlainTitle(view.status, " Endpoint Ping ")
 
-	view.form = view.buildForm()
+	view.settingsList = view.buildSettingsList()
+	view.refreshSettingsList()
 	view.setStatusText(view.statusText("", view.cfg.Account.Endpoints, nil, false, "Waiting to ping."))
 	return view
 }
 
-func (v *settingsView) buildForm() *tview.Form {
+func (v *settingsView) buildSettingsList() *tview.List {
+	list := tview.NewList().ShowSecondaryText(false)
+	styleList(list)
+	list.SetFocusFunc(func() {
+		applyListFocusStyle(list, true)
+		if v.app != nil {
+			v.app.focusTarget = appFocusContent
+			v.app.contentFocus = list
+		}
+	})
+	list.SetBlurFunc(func() {
+		applyListFocusStyle(list, false)
+	})
+	return list
+}
+
+func (v *settingsView) refreshSettingsList() {
+	if v.settingsList == nil {
+		return
+	}
+	current := v.settingsList.GetCurrentItem()
+	v.settingsList.Clear()
+	v.settingsList.AddItem(settingListLine("Endpoints (; separated)", endpointsToText(v.cfg.Account.Endpoints)), "", 0, func() {
+		v.openEndpointPopup()
+	})
+	v.settingsList.AddItem(settingListLine("Audio backend", fallbackText(v.settings.AudioBackend, "auto")), "", 0, func() {
+		v.openChoicePopup("Audio backend", audioBackendLabels, audioBackendOption(v.settings.AudioBackend), func(index int) error {
+			if index < 0 || index >= len(audioBackendValues) {
+				return errors.New("invalid audio backend")
+			}
+			v.settings.AudioBackend = audioBackendValues[index]
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem(settingListLine("MPV path", fallbackText(v.settings.MPVPath, "PATH lookup")), "", 0, func() {
+		v.openTextPopup("MPV path", v.settings.MPVPath, func(value string) error {
+			v.settings.MPVPath = strings.TrimSpace(value)
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem(settingListLine("Cache dir", fallbackText(v.settings.CacheDir, "default")), "", 0, func() {
+		v.openTextPopup("Cache dir", v.settings.CacheDir, func(value string) error {
+			v.settings.CacheDir = strings.TrimSpace(value)
+			v.refreshSettingsList()
+			return nil
+		})
+	})
 	cacheMaxMB := v.settings.AudioCacheMaxBytes / 1024 / 1024
 	if cacheMaxMB <= 0 {
 		cacheMaxMB = 2048
 	}
-
-	form := tview.NewForm().
-		AddInputField("Endpoints (; separated)", endpointsToText(v.cfg.Account.Endpoints), settingsPreferredFieldWidths["Endpoints (; separated)"], nil, func(value string) {
-			v.cfg.Account.Endpoints = parseEndpoints(value)
-			v.startProbeAfterDelay("")
-		}).
-		AddDropDown("Audio backend", audioBackendLabels, audioBackendOption(v.settings.AudioBackend), func(_ string, index int) {
-			if index >= 0 && index < len(audioBackendValues) {
-				v.settings.AudioBackend = audioBackendValues[index]
+	v.settingsList.AddItem(settingListLine("Audio cache MB", strconv.FormatInt(cacheMaxMB, 10)), "", 0, func() {
+		v.openTextPopup("Audio cache MB", strconv.FormatInt(cacheMaxMB, 10), func(value string) error {
+			mb, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if err != nil || mb <= 0 {
+				return errors.New("audio cache MB must be a positive integer")
 			}
-		}).
-		AddInputField("MPV path", v.settings.MPVPath, settingsPreferredFieldWidths["MPV path"], nil, func(value string) {
-			v.settings.MPVPath = strings.TrimSpace(value)
-		}).
-		AddInputField("Cache dir", v.settings.CacheDir, settingsPreferredFieldWidths["Cache dir"], nil, func(value string) {
-			v.settings.CacheDir = strings.TrimSpace(value)
-		}).
-		AddInputField("Audio cache MB", strconv.FormatInt(cacheMaxMB, 10), settingsPreferredFieldWidths["Audio cache MB"], tview.InputFieldInteger, func(value string) {
-			if mb, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && mb > 0 {
-				v.settings.AudioCacheMaxBytes = mb * 1024 * 1024
-			}
-		}).
-		AddInputField("Health interval sec", strconv.Itoa(v.settings.HealthCheckIntervalSeconds), settingsPreferredFieldWidths["Health interval sec"], tview.InputFieldInteger, func(value string) {
-			if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds > 0 {
-				v.settings.HealthCheckIntervalSeconds = seconds
-			}
-		}).
-		AddInputField("Switch threshold", fmt.Sprintf("%.2f", v.settings.EndpointSwitchThreshold), settingsPreferredFieldWidths["Switch threshold"], nil, func(value string) {
-			if threshold, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && threshold > 0 && threshold < 1 {
-				v.settings.EndpointSwitchThreshold = threshold
-			}
-		}).
-		AddDropDown("Prefetch", onOffOptions, boolOption(v.settings.EnablePrefetch), func(_ string, index int) {
-			v.settings.EnablePrefetch = index == 1
-		}).
-		AddDropDown("Bundled mpv", onOffOptions, boolOption(v.settings.UseBundledMPV), func(_ string, index int) {
-			v.settings.UseBundledMPV = index == 1
-		}).
-		AddButton("Save", func() {
-			v.save()
-		}).
-		AddButton("Back", func() {
-			v.app.goBack()
+			v.settings.AudioCacheMaxBytes = mb * 1024 * 1024
+			v.refreshSettingsList()
+			return nil
 		})
-
-	form.SetCancelFunc(func() {
-		v.app.goBack()
 	})
-	form.SetFocus(form.GetFormItemIndex("Audio backend"))
-	styleForm(form)
-	form.SetBorder(false)
-	form.SetItemPadding(0)
-	return form
+	v.settingsList.AddItem(settingListLine("Health interval sec", strconv.Itoa(v.settings.HealthCheckIntervalSeconds)), "", 0, func() {
+		v.openTextPopup("Health interval sec", strconv.Itoa(v.settings.HealthCheckIntervalSeconds), func(value string) error {
+			seconds, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || seconds <= 0 {
+				return errors.New("health interval must be a positive integer")
+			}
+			v.settings.HealthCheckIntervalSeconds = seconds
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem(settingListLine("Switch threshold", fmt.Sprintf("%.2f", v.settings.EndpointSwitchThreshold)), "", 0, func() {
+		v.openTextPopup("Switch threshold", fmt.Sprintf("%.2f", v.settings.EndpointSwitchThreshold), func(value string) error {
+			threshold, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil || threshold <= 0 || threshold >= 1 {
+				return errors.New("switch threshold must be greater than 0 and less than 1")
+			}
+			v.settings.EndpointSwitchThreshold = threshold
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem(settingListLine("Prefetch", onOffOptions[boolOption(v.settings.EnablePrefetch)]), "", 0, func() {
+		v.openChoicePopup("Prefetch", onOffOptions, boolOption(v.settings.EnablePrefetch), func(index int) error {
+			v.settings.EnablePrefetch = index == 1
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem(settingListLine("Bundled mpv", onOffOptions[boolOption(v.settings.UseBundledMPV)]), "", 0, func() {
+		v.openChoicePopup("Bundled mpv", onOffOptions, boolOption(v.settings.UseBundledMPV), func(index int) error {
+			v.settings.UseBundledMPV = index == 1
+			v.refreshSettingsList()
+			return nil
+		})
+	})
+	v.settingsList.AddItem("Save settings", "", 0, func() {
+		v.save()
+	})
+	v.settingsList.AddItem("Back", "", 0, func() {
+		if v.app != nil {
+			v.app.goBack()
+		}
+	})
+	setListCurrentItem(v.settingsList, current)
+}
+
+func settingListLine(label, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = "(empty)"
+	}
+	return label + "  " + value
 }
 
 func (v *settingsView) Draw(screen tcell.Screen) {
@@ -195,14 +243,9 @@ func (v *settingsView) Draw(screen tcell.Screen) {
 	if v.contentRect.width > 0 && v.contentRect.height > 0 {
 		switch v.activeTab {
 		case systemTabSettings:
-			v.resizeFormFields(v.contentRect.width)
-			v.form.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
-			v.formRect = v.contentRect
-			v.form.Draw(screen)
-		case systemTabProperties:
-			v.content.SetText(v.propertiesText())
-			v.content.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
-			v.content.Draw(screen)
+			v.settingsList.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
+			v.settingsListRect = v.contentRect
+			v.settingsList.Draw(screen)
 		default:
 			v.content.SetText(v.aboutText())
 			v.content.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
@@ -236,9 +279,9 @@ func (v *settingsView) layout(x, y, width, height int) {
 	}
 	v.contentRect = settingsRect{x: x, y: contentY, width: width, height: contentHeight}
 	if v.activeTab == systemTabSettings {
-		v.formRect = v.contentRect
+		v.settingsListRect = v.contentRect
 	} else {
-		v.formRect = settingsRect{}
+		v.settingsListRect = settingsRect{}
 	}
 }
 
@@ -281,52 +324,16 @@ func drawPlainText(screen tcell.Screen, x, y int, text string, style tcell.Style
 	}
 }
 
-func (v *settingsView) resizeFormFields(width int) {
-	labelWidth := settingsFormLabelWidth(v.form)
-	fieldWidth := width - labelWidth
-	if fieldWidth < 1 {
-		fieldWidth = 1
-	}
-
-	for i := 0; i < v.form.GetFormItemCount(); i++ {
-		item := v.form.GetFormItem(i)
-		preferred := settingsPreferredFieldWidths[item.GetLabel()]
-		if preferred <= 0 {
-			preferred = fieldWidth
-		}
-		resized := settingsClampInt(preferred, 1, fieldWidth)
-		switch item := item.(type) {
-		case *tview.InputField:
-			item.SetFieldWidth(resized)
-		case *tview.DropDown:
-			item.SetFieldWidth(resized)
-		case *tview.TextView:
-			item.SetSize(1, resized)
-		}
-	}
-}
-
-func settingsFormLabelWidth(form *tview.Form) int {
-	width := 0
-	for i := 0; i < form.GetFormItemCount(); i++ {
-		labelWidth := tview.TaggedStringWidth(form.GetFormItem(i).GetLabel())
-		if labelWidth > width {
-			width = labelWidth
-		}
-	}
-	return width + 1
-}
-
 func (v *settingsView) Focus(delegate func(p tview.Primitive)) {
 	if v.activeTab == systemTabSettings {
-		v.form.Focus(delegate)
+		v.settingsList.Focus(delegate)
 		return
 	}
 	v.Box.Focus(delegate)
 }
 
 func (v *settingsView) HasFocus() bool {
-	return v.form.HasFocus() || v.Box.HasFocus()
+	return v.settingsList.HasFocus() || v.Box.HasFocus()
 }
 
 func (v *settingsView) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
@@ -335,64 +342,62 @@ func (v *settingsView) InputHandler() func(event *tcell.EventKey, setFocus func(
 			return
 		}
 		if v.activeTab == systemTabSettings {
-			if handler := v.form.InputHandler(); handler != nil {
+			if handler := v.settingsList.InputHandler(); handler != nil {
 				handler(event, setFocus)
 			}
+			return
+		}
+		if handler := v.content.InputHandler(); handler != nil {
+			handler(event, setFocus)
 		}
 	})
 }
 
 func (v *settingsView) handleTabShortcut(event *tcell.EventKey, setFocus func(p tview.Primitive)) bool {
-	if v.activeTab == systemTabSettings && v.app != nil && v.app.app != nil && acceptsTextInput(v.app.app.GetFocus()) {
-		return false
-	}
-	if event.Key() != tcell.KeyRune {
-		return false
-	}
-	switch event.Rune() {
-	case '[':
+	switch event.Key() {
+	case tcell.KeyLeft:
 		v.setActiveTab(v.activeTab-1, setFocus)
 		return true
-	case ']':
+	case tcell.KeyRight:
 		v.setActiveTab(v.activeTab+1, setFocus)
 		return true
-	case '1':
-		v.setActiveTab(systemTabAbout, setFocus)
-		return true
-	case '2':
-		v.setActiveTab(systemTabSettings, setFocus)
-		return true
-	case '3':
-		v.setActiveTab(systemTabProperties, setFocus)
-		return true
+	case tcell.KeyRune:
+		switch event.Rune() {
+		case '[':
+			v.setActiveTab(v.activeTab-1, setFocus)
+			return true
+		case ']':
+			v.setActiveTab(v.activeTab+1, setFocus)
+			return true
+		case '1':
+			v.setActiveTab(systemTabAbout, setFocus)
+			return true
+		case '2':
+			v.setActiveTab(systemTabSettings, setFocus)
+			return true
+		}
 	}
 	return false
 }
 
 func (v *settingsView) setActiveTab(tab systemTab, setFocus func(tview.Primitive)) {
+	last := systemTab(len(systemTabLabels) - 1)
 	if tab < systemTabAbout {
-		tab = systemTabProperties
+		tab = last
 	}
-	if tab > systemTabProperties {
+	if tab > last {
 		tab = systemTabAbout
 	}
 	v.activeTab = tab
 	if tab == systemTabSettings {
-		v.form.Focus(setFocus)
+		v.settingsList.Focus(setFocus)
 		return
 	}
 	setFocus(v)
 }
 
 func (v *settingsView) PasteHandler() func(pastedText string, setFocus func(p tview.Primitive)) {
-	return v.WrapPasteHandler(func(pastedText string, setFocus func(p tview.Primitive)) {
-		if v.activeTab != systemTabSettings {
-			return
-		}
-		if handler := v.form.PasteHandler(); handler != nil {
-			handler(pastedText, setFocus)
-		}
-	})
+	return v.WrapPasteHandler(func(_ string, _ func(p tview.Primitive)) {})
 }
 
 func (v *settingsView) MouseHandler() func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (bool, tview.Primitive) {
@@ -416,21 +421,21 @@ func (v *settingsView) MouseHandler() func(action tview.MouseAction, event *tcel
 			}
 		}
 
-		switch action {
-		case tview.MouseScrollUp:
-			if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
-				v.moveFormFocus(-1, wrappedSetFocus)
+		if v.activeTab == systemTabSettings && v.settingsListRect.contains(x, y) {
+			switch action {
+			case tview.MouseScrollUp:
+				v.moveSettingsSelection(-1, wrappedSetFocus)
 				return true, nil
-			}
-		case tview.MouseScrollDown:
-			if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
-				v.moveFormFocus(1, wrappedSetFocus)
+			case tview.MouseScrollDown:
+				v.moveSettingsSelection(1, wrappedSetFocus)
+				return true, nil
+			case tview.MouseLeftDown, tview.MouseLeftClick:
+				v.selectSettingsRow(y, wrappedSetFocus)
 				return true, nil
 			}
 		}
-
-		if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
-			if handler := v.form.MouseHandler(); handler != nil {
+		if v.activeTab == systemTabAbout && v.contentRect.contains(x, y) {
+			if handler := v.content.MouseHandler(); handler != nil {
 				return handler(action, event, wrappedSetFocus)
 			}
 		}
@@ -442,35 +447,140 @@ func (v *settingsView) MouseHandler() func(action tview.MouseAction, event *tcel
 	})
 }
 
-func (v *settingsView) moveFormFocus(delta int, setFocus func(tview.Primitive)) {
-	count := v.form.GetFormItemCount() + v.form.GetButtonCount()
-	if count == 0 {
+func (v *settingsView) moveSettingsSelection(delta int, setFocus func(tview.Primitive)) {
+	if v.settingsList.GetItemCount() == 0 {
 		return
 	}
-	current := v.currentFormFocus()
-	if current < 0 {
-		current = v.form.GetFormItemIndex("Audio backend")
-	}
-	if current < 0 {
-		current = 0
-	}
-	next := settingsClampInt(current+delta, 0, count-1)
-	v.form.SetFocus(next)
-	v.form.Focus(setFocus)
+	setListCurrentItem(v.settingsList, v.settingsList.GetCurrentItem()+delta)
+	v.settingsList.Focus(setFocus)
 }
 
-func (v *settingsView) currentFormFocus() int {
-	for i := 0; i < v.form.GetFormItemCount(); i++ {
-		if v.form.GetFormItem(i).HasFocus() {
-			return i
-		}
+func (v *settingsView) selectSettingsRow(y int, setFocus func(tview.Primitive)) {
+	index := y - v.settingsListRect.y
+	if index < 0 || index >= v.settingsList.GetItemCount() {
+		return
 	}
-	for i := 0; i < v.form.GetButtonCount(); i++ {
-		if v.form.GetButton(i).HasFocus() {
-			return v.form.GetFormItemCount() + i
-		}
+	v.settingsList.SetCurrentItem(index)
+	v.settingsList.Focus(setFocus)
+}
+
+func (v *settingsView) openEndpointPopup() {
+	original := endpointsToText(v.cfg.Account.Endpoints)
+	v.openInputPopup("Edit Endpoints", "Endpoints (; separated)", original, 72, func(value string) error {
+		v.cfg.Account.Endpoints = parseEndpoints(value)
+		v.refreshSettingsList()
+		v.startProbeNow("")
+		return nil
+	}, func(value string) {
+		v.cfg.Account.Endpoints = parseEndpoints(value)
+		v.refreshSettingsList()
+		v.startProbeAfterDelay("")
+	}, func() {
+		v.cfg.Account.Endpoints = parseEndpoints(original)
+		v.refreshSettingsList()
+		v.startProbeNow("")
+	})
+}
+
+func (v *settingsView) openTextPopup(label, value string, accept func(string) error) {
+	v.openInputPopup("Edit "+label, label, value, 64, accept, nil, nil)
+}
+
+func (v *settingsView) openInputPopup(title, label, value string, fieldWidth int, accept func(string) error, live func(string), cancel func()) {
+	if v.app == nil || v.app.pages == nil {
+		return
 	}
-	return -1
+	form := tview.NewForm()
+	current := value
+	form.AddInputField(label, value, fieldWidth, nil, func(text string) {
+		current = text
+		if live != nil {
+			live(text)
+		}
+	})
+	form.AddButton("OK", func() {
+		if accept != nil {
+			if err := accept(current); err != nil {
+				v.setStatusText(v.statusText("Invalid value: "+err.Error(), v.cfg.Account.Endpoints, nil, false, ""))
+				return
+			}
+		}
+		v.closePopup()
+	})
+	form.AddButton("Cancel", func() {
+		if cancel != nil {
+			cancel()
+		}
+		v.closePopup()
+	})
+	form.SetCancelFunc(func() {
+		if cancel != nil {
+			cancel()
+		}
+		v.closePopup()
+	})
+	styleForm(form)
+	form.SetItemPadding(0)
+	form.SetBorder(true)
+	form.SetBorderColor(uiBorder)
+	form.SetTitleColor(uiTitle)
+	setPlainTitle(form, title)
+	form.SetFocus(0)
+	width := settingsClampInt(fieldWidth+26, 40, 100)
+	v.showPopup(form, width, 7)
+}
+
+func (v *settingsView) openChoicePopup(label string, options []string, current int, accept func(int) error) {
+	if v.app == nil || v.app.pages == nil {
+		return
+	}
+	selected := current
+	form := tview.NewForm()
+	form.AddDropDown(label, options, current, func(_ string, index int) {
+		selected = index
+	})
+	form.AddButton("OK", func() {
+		if accept != nil {
+			if err := accept(selected); err != nil {
+				v.setStatusText(v.statusText("Invalid value: "+err.Error(), v.cfg.Account.Endpoints, nil, false, ""))
+				return
+			}
+		}
+		v.closePopup()
+	})
+	form.AddButton("Cancel", func() {
+		v.closePopup()
+	})
+	form.SetCancelFunc(func() {
+		v.closePopup()
+	})
+	styleForm(form)
+	form.SetItemPadding(0)
+	form.SetBorder(true)
+	form.SetBorderColor(uiBorder)
+	form.SetTitleColor(uiTitle)
+	setPlainTitle(form, "Choose "+label)
+	form.SetFocus(0)
+	v.showPopup(form, 52, 7)
+}
+
+func (v *settingsView) showPopup(item tview.Primitive, width, height int) {
+	v.app.pages.RemovePage(systemEditPageName)
+	v.app.pages.AddPage(systemEditPageName, center(item, width, height), true, true)
+	if v.app.app != nil {
+		v.app.app.SetFocus(item)
+	}
+}
+
+func (v *settingsView) closePopup() {
+	if v.app != nil && v.app.pages != nil {
+		v.app.pages.RemovePage(systemEditPageName)
+	}
+	if v.app != nil && v.app.app != nil {
+		v.settingsList.Focus(func(p tview.Primitive) {
+			v.app.app.SetFocus(p)
+		})
+	}
 }
 
 func (v *settingsView) save() {
@@ -524,10 +634,14 @@ func validateEndpointIdentities(identities []subsonic.EndpointIdentity) error {
 }
 
 func (v *settingsView) finishSave(cfg models.Config, message string) {
+	if v.app == nil {
+		return
+	}
 	cfg = v.app.apply(cfg)
 	v.cfg = cfg
 	v.settings = cfg.Settings
 	v.app.cfg = cfg
+	v.refreshSettingsList()
 	if err := v.saveConfig(cfg); err != nil {
 		v.setStatusText(v.statusText("Save failed: "+err.Error(), cfg.Account.Endpoints, nil, false, ""))
 		v.app.modal("Save failed", err.Error())
@@ -684,7 +798,7 @@ func (v *settingsView) aboutText() string {
 			endpoint = active.URL
 		}
 	}
-	return fmt.Sprintf("This is Saki %s\nMade with music by Nemo Xiong\nRepository: https://github.com/xiongnemo/Saki\n\nConnected endpoint:\n%s", version.String(), endpoint)
+	return fmt.Sprintf("This is Saki %s\nMade with music by Nemo Xiong\nRepository: https://github.com/xiongnemo/Saki\n\nConnected endpoint:\n%s\n\nProperties\n%s", version.String(), endpoint, v.propertiesText())
 }
 
 func (v *settingsView) propertiesText() string {

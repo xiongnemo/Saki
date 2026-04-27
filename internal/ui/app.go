@@ -951,7 +951,7 @@ func (a *App) showSettings(push bool) {
 	}
 
 	view := newSettingsView(a, a.cfg)
-	a.setContentWithFocus("System", view, view.form)
+	a.setContentWithFocus("System", view, view.settingsList)
 	a.contentOwnsTab = true
 	view.startProbeNow("")
 }

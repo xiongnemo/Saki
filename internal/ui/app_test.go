@@ -232,7 +232,7 @@ func TestEscapeGoesBackFromForm(t *testing.T) {
 	}
 }
 
-func TestSettingsStartsOnAudioBackend(t *testing.T) {
+func TestSettingsStartsOnList(t *testing.T) {
 	app := &App{
 		app:     tview.NewApplication(),
 		content: tview.NewPages(),
@@ -258,19 +258,22 @@ func TestSettingsStartsOnAudioBackend(t *testing.T) {
 	if view.activeTab != systemTabSettings {
 		t.Fatalf("initial tab = %v, want settings", view.activeTab)
 	}
-	form, ok := app.contentFocus.(*tview.Form)
+	list, ok := app.contentFocus.(*tview.List)
 	if !ok {
-		t.Fatalf("content focus = %T, want form", app.contentFocus)
+		t.Fatalf("content focus = %T, want settings list", app.contentFocus)
 	}
-	form.Focus(func(p tview.Primitive) {
+	list.Focus(func(p tview.Primitive) {
 		app.app.SetFocus(p)
 	})
-	if focus, ok := app.app.GetFocus().(*tview.DropDown); !ok || focus.GetLabel() != "Audio backend" {
-		t.Fatalf("settings focus = %T %[1]v, want Audio backend dropdown", app.app.GetFocus())
+	if app.app.GetFocus() != list {
+		t.Fatalf("settings focus = %T, want settings list", app.app.GetFocus())
+	}
+	if got, _ := list.GetItemText(0); !strings.Contains(got, "Endpoints") {
+		t.Fatalf("first settings row = %q, want Endpoints", got)
 	}
 }
 
-func TestSettingsKeepsTabInsideForm(t *testing.T) {
+func TestSettingsKeepsTabInsideSystem(t *testing.T) {
 	app := &App{
 		app:     tview.NewApplication(),
 		content: tview.NewPages(),
@@ -296,7 +299,7 @@ func TestSettingsKeepsTabInsideForm(t *testing.T) {
 	}
 }
 
-func TestSettingsResponsiveFieldsStayInsideForm(t *testing.T) {
+func TestSettingsListAndPingStayInsideSystem(t *testing.T) {
 	app := &App{app: tview.NewApplication()}
 	view := newSettingsView(app, models.Config{
 		Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
@@ -318,20 +321,11 @@ func TestSettingsResponsiveFieldsStayInsideForm(t *testing.T) {
 	view.SetRect(0, 0, 56, 14)
 	view.Draw(screen)
 
-	labelWidth := settingsFormLabelWidth(view.form)
-	available := view.formRect.width - labelWidth
-	for _, label := range []string{"Endpoints (; separated)", "MPV path", "Cache dir"} {
-		field, ok := view.form.GetFormItemByLabel(label).(*tview.InputField)
-		if !ok {
-			t.Fatalf("%s is %T, want input field", label, view.form.GetFormItemByLabel(label))
-		}
-		if field.GetFieldWidth() > available {
-			t.Fatalf("%s field width = %d, available = %d", label, field.GetFieldWidth(), available)
-		}
-		x, _, width, _ := field.GetRect()
-		if x+width > view.formRect.x+view.formRect.width {
-			t.Fatalf("%s rect overflows form: x=%d width=%d form=%+v", label, x, width, view.formRect)
-		}
+	if view.settingsListRect.width > view.contentRect.width {
+		t.Fatalf("settings list width = %d, content width = %d", view.settingsListRect.width, view.contentRect.width)
+	}
+	if view.settingsListRect.x < view.contentRect.x || view.settingsListRect.x+view.settingsListRect.width > view.contentRect.x+view.contentRect.width {
+		t.Fatalf("settings list overflows content: list=%+v content=%+v", view.settingsListRect, view.contentRect)
 	}
 
 	screen.SetSize(160, 20)
@@ -345,7 +339,7 @@ func TestSettingsResponsiveFieldsStayInsideForm(t *testing.T) {
 	}
 }
 
-func TestSystemTabsRenderAboutAndProperties(t *testing.T) {
+func TestSystemAboutIncludesProperties(t *testing.T) {
 	client := subsonic.NewClient(nil)
 	cfg := models.Config{
 		Account: models.Account{
@@ -365,17 +359,9 @@ func TestSystemTabsRenderAboutAndProperties(t *testing.T) {
 
 	view.setActiveTab(systemTabAbout, func(p tview.Primitive) { app.app.SetFocus(p) })
 	about := view.aboutText()
-	for _, want := range []string{"This is Saki", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example"} {
+	for _, want := range []string{"This is Saki", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Properties", "Config path", "Username", "Audio backend", "OS/Arch", "No track loaded"} {
 		if !strings.Contains(about, want) {
 			t.Fatalf("about text missing %q: %q", want, about)
-		}
-	}
-
-	view.setActiveTab(systemTabProperties, func(p tview.Primitive) { app.app.SetFocus(p) })
-	props := view.propertiesText()
-	for _, want := range []string{"Config path", "Username", "Active endpoint", "Audio backend", "OS/Arch", "No track loaded"} {
-		if !strings.Contains(props, want) {
-			t.Fatalf("properties text missing %q: %q", want, props)
 		}
 	}
 }
@@ -393,13 +379,43 @@ func TestSystemTabShortcutsSwitchTabs(t *testing.T) {
 	if view.activeTab != systemTabAbout {
 		t.Fatalf("tab after 1 = %v, want about", view.activeTab)
 	}
-	handler(tcell.NewEventKey(tcell.KeyRune, ']', tcell.ModNone), setFocus)
+	handler(tcell.NewEventKey(tcell.KeyRight, 0, tcell.ModNone), setFocus)
 	if view.activeTab != systemTabSettings {
-		t.Fatalf("tab after ] = %v, want settings", view.activeTab)
+		t.Fatalf("tab after right = %v, want settings", view.activeTab)
 	}
-	handler(tcell.NewEventKey(tcell.KeyRune, '3', tcell.ModNone), setFocus)
-	if view.activeTab != systemTabProperties {
-		t.Fatalf("tab after 3 = %v, want properties", view.activeTab)
+	handler(tcell.NewEventKey(tcell.KeyLeft, 0, tcell.ModNone), setFocus)
+	if view.activeTab != systemTabAbout {
+		t.Fatalf("tab after left = %v, want about", view.activeTab)
+	}
+	handler(tcell.NewEventKey(tcell.KeyRune, '2', tcell.ModNone), setFocus)
+	if view.activeTab != systemTabSettings {
+		t.Fatalf("tab after 2 = %v, want settings", view.activeTab)
+	}
+}
+
+func TestSettingsEnterOpensEditPopup(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		},
+	}
+	view := newSettingsView(app, app.cfg)
+	app.pages.AddPage("main", view, true, true)
+	app.app.SetFocus(view.settingsList)
+
+	handler := view.settingsList.InputHandler()
+	if handler == nil {
+		t.Fatal("expected settings list input handler")
+	}
+	handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
+		app.app.SetFocus(p)
+	})
+
+	name, _ := app.pages.GetFrontPage()
+	if name != systemEditPageName {
+		t.Fatalf("front page = %q, want edit popup", name)
 	}
 }
 

@@ -27,7 +27,7 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Multiple playback backends: default `auto` tries miniaudio first for MP3/WAV/FLAC and Range-capable or completed-cache ALAC/M4A, then falls back to optional `mpv` for unsupported sources.
 - Local stream proxy with playback-time buffering and completed-file audio cache.
 - Seeking support when the current backend/source can provide a seekable stream or cached file.
-- System page with About, Settings, runtime properties, endpoint validation, and live endpoint ping/status.
+- System page with About/runtime properties, popup-based Settings, endpoint validation, and live endpoint ping/status.
 - Windows SMTC integration through a small C++/WinRT DLL shim.
 - Versioned builds and `--version` / `-v` output with branch, commit, and dirty state.
 
