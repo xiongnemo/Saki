@@ -110,3 +110,13 @@ Status: completed.
 - [x] Add a read-only Subsonic endpoint probe API with a 5s UI timeout.
 - [x] Keep Settings Tab/Shift+Tab navigation inside the form instead of jumping to Queue.
 - [x] Verify small-window layout, keyboard navigation, endpoint probing, and existing regressions.
+
+## System Page Tabs and Endpoint Identity Validation
+
+Status: completed.
+
+- [x] Rename the Settings surface to a tabbed System page with About, Settings, and Properties views.
+- [x] Move Endpoint Ping to a full-width bottom diagnostics panel.
+- [x] Add library fingerprint validation before saving multiple endpoints.
+- [x] Add About and read-only runtime Properties content.
+- [x] Verify layout, navigation, validation, and existing regressions.

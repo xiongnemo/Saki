@@ -2,7 +2,11 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,15 +20,13 @@ import (
 )
 
 const (
-	settingsWideThreshold  = 120
-	settingsStatusMinWidth = 32
-	settingsFormMaxWidth   = 96
-	settingsProbeDelay     = 500 * time.Millisecond
-	settingsProbeTimeout   = 5 * time.Second
+	settingsProbeDelay   = 500 * time.Millisecond
+	settingsProbeTimeout = 5 * time.Second
+	systemMinPingHeight  = 3
+	systemMaxPingHeight  = 8
 )
 
 var settingsPreferredFieldWidths = map[string]int{
-	"Version":                 72,
 	"Endpoints (; separated)": 72,
 	"Audio backend":           10,
 	"MPV path":                72,
@@ -35,6 +37,16 @@ var settingsPreferredFieldWidths = map[string]int{
 	"Prefetch":                3,
 	"Bundled mpv":             3,
 }
+
+type systemTab int
+
+const (
+	systemTabAbout systemTab = iota
+	systemTabSettings
+	systemTabProperties
+)
+
+var systemTabLabels = []string{"About", "Settings", "Properties"}
 
 type settingsRect struct {
 	x, y, width, height int
@@ -49,12 +61,16 @@ type settingsView struct {
 
 	app      *App
 	form     *tview.Form
+	content  *tview.TextView
 	status   *tview.TextView
 	cfg      models.Config
 	settings models.Settings
 
-	formRect   settingsRect
-	statusRect settingsRect
+	activeTab   systemTab
+	tabRects    []settingsRect
+	contentRect settingsRect
+	formRect    settingsRect
+	statusRect  settingsRect
 
 	probeMu    sync.Mutex
 	probeSeq   int
@@ -65,11 +81,13 @@ type settingsView struct {
 
 func newSettingsView(app *App, cfg models.Config) *settingsView {
 	view := &settingsView{
-		Box:      tview.NewBox(),
-		app:      app,
-		cfg:      cfg,
-		settings: cfg.Settings,
-		status:   tview.NewTextView(),
+		Box:       tview.NewBox(),
+		app:       app,
+		cfg:       cfg,
+		settings:  cfg.Settings,
+		activeTab: systemTabSettings,
+		content:   tview.NewTextView(),
+		status:    tview.NewTextView(),
 	}
 	view.saveConfig = func(models.Config) error { return nil }
 	if app != nil {
@@ -81,10 +99,17 @@ func newSettingsView(app *App, cfg models.Config) *settingsView {
 	view.Box.SetBackgroundColor(uiBackground)
 	view.Box.SetBorderColor(uiBorder)
 	view.Box.SetTitleColor(uiTitle)
-	setViewTitle(view.Box, "Settings")
+	setViewTitle(view.Box, "System")
+
+	view.content.SetDynamicColors(true)
+	view.content.SetWrap(true)
+	view.content.SetScrollable(true)
+	view.content.SetTextColor(uiText)
+	view.content.SetBackgroundColor(uiBackground)
 
 	view.status.SetDynamicColors(true)
-	view.status.SetWrap(true)
+	view.status.SetWrap(false)
+	view.status.SetScrollable(true)
 	view.status.SetTextColor(uiText)
 	view.status.SetBackgroundColor(uiBackground)
 	view.status.SetBorder(true)
@@ -104,7 +129,6 @@ func (v *settingsView) buildForm() *tview.Form {
 	}
 
 	form := tview.NewForm().
-		AddTextView("Version", version.String(), settingsPreferredFieldWidths["Version"], 1, false, false).
 		AddInputField("Endpoints (; separated)", endpointsToText(v.cfg.Account.Endpoints), settingsPreferredFieldWidths["Endpoints (; separated)"], nil, func(value string) {
 			v.cfg.Account.Endpoints = parseEndpoints(value)
 			v.startProbeAfterDelay("")
@@ -166,10 +190,24 @@ func (v *settingsView) Draw(screen tcell.Screen) {
 	}
 
 	v.layout(x, y, width, height)
-	if v.formRect.width > 0 && v.formRect.height > 0 {
-		v.resizeFormFields(v.formRect.width)
-		v.form.SetRect(v.formRect.x, v.formRect.y, v.formRect.width, v.formRect.height)
-		v.form.Draw(screen)
+	v.drawTabs(screen)
+
+	if v.contentRect.width > 0 && v.contentRect.height > 0 {
+		switch v.activeTab {
+		case systemTabSettings:
+			v.resizeFormFields(v.contentRect.width)
+			v.form.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
+			v.formRect = v.contentRect
+			v.form.Draw(screen)
+		case systemTabProperties:
+			v.content.SetText(v.propertiesText())
+			v.content.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
+			v.content.Draw(screen)
+		default:
+			v.content.SetText(v.aboutText())
+			v.content.SetRect(v.contentRect.x, v.contentRect.y, v.contentRect.width, v.contentRect.height)
+			v.content.Draw(screen)
+		}
 	}
 	if v.statusRect.width > 0 && v.statusRect.height > 0 {
 		v.status.SetRect(v.statusRect.x, v.statusRect.y, v.statusRect.width, v.statusRect.height)
@@ -178,39 +216,69 @@ func (v *settingsView) Draw(screen tcell.Screen) {
 }
 
 func (v *settingsView) layout(x, y, width, height int) {
-	if width >= settingsWideThreshold {
-		formWidth := width - settingsStatusMinWidth - 2
-		if formWidth > settingsFormMaxWidth {
-			formWidth = settingsFormMaxWidth
-		}
-		if formWidth < 1 {
-			formWidth = 1
-		}
-		statusWidth := width - formWidth - 2
-		if statusWidth < 1 {
-			statusWidth = 1
-		}
-		v.formRect = settingsRect{x: x, y: y, width: formWidth, height: height}
-		v.statusRect = settingsRect{x: x + formWidth + 2, y: y, width: statusWidth, height: height}
-		return
+	v.tabRects = v.tabRects[:0]
+	pingHeight := v.pingHeight(height)
+	tabHeight := 1
+	contentY := y + tabHeight
+	if height > 2 {
+		contentY++
 	}
+	contentBottom := y + height
+	if pingHeight > 0 {
+		contentBottom -= pingHeight + 1
+		v.statusRect = settingsRect{x: x, y: contentBottom + 1, width: width, height: pingHeight}
+	} else {
+		v.statusRect = settingsRect{}
+	}
+	contentHeight := contentBottom - contentY
+	if contentHeight < 0 {
+		contentHeight = 0
+	}
+	v.contentRect = settingsRect{x: x, y: contentY, width: width, height: contentHeight}
+	if v.activeTab == systemTabSettings {
+		v.formRect = v.contentRect
+	} else {
+		v.formRect = settingsRect{}
+	}
+}
 
-	if height >= 18 {
-		statusHeight := settingsClampInt(height/3, 5, 9)
-		formHeight := height - statusHeight - 1
-		v.formRect = settingsRect{x: x, y: y, width: width, height: formHeight}
-		v.statusRect = settingsRect{x: x, y: y + formHeight + 1, width: width, height: statusHeight}
-		return
+func (v *settingsView) pingHeight(totalHeight int) int {
+	if totalHeight < 10 {
+		return 0
 	}
-	if height >= 12 {
-		statusHeight := 3
-		formHeight := height - statusHeight - 1
-		v.formRect = settingsRect{x: x, y: y, width: width, height: formHeight}
-		v.statusRect = settingsRect{x: x, y: y + formHeight + 1, width: width, height: statusHeight}
-		return
+	if totalHeight < 16 {
+		return systemMinPingHeight
 	}
-	v.formRect = settingsRect{x: x, y: y, width: width, height: height}
-	v.statusRect = settingsRect{}
+	height := len(v.cfg.Account.Endpoints) + 2
+	return settingsClampInt(height, systemMinPingHeight+1, systemMaxPingHeight)
+}
+
+func (v *settingsView) drawTabs(screen tcell.Screen) {
+	x, y, width, _ := v.GetInnerRect()
+	col := x
+	for index, label := range systemTabLabels {
+		text := " " + label + " "
+		tabWidth := len(text)
+		if col+tabWidth > x+width {
+			tabWidth = x + width - col
+		}
+		if tabWidth <= 0 {
+			break
+		}
+		style := tcell.StyleDefault.Foreground(uiTitle).Background(uiBackground)
+		if systemTab(index) == v.activeTab {
+			style = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent).Bold(true)
+		}
+		v.tabRects = append(v.tabRects, settingsRect{x: col, y: y, width: tabWidth, height: 1})
+		drawPlainText(screen, col, y, text[:tabWidth], style)
+		col += tabWidth + 1
+	}
+}
+
+func drawPlainText(screen tcell.Screen, x, y int, text string, style tcell.Style) {
+	for i, r := range text {
+		screen.SetContent(x+i, y, r, nil, style)
+	}
 }
 
 func (v *settingsView) resizeFormFields(width int) {
@@ -250,7 +318,11 @@ func settingsFormLabelWidth(form *tview.Form) int {
 }
 
 func (v *settingsView) Focus(delegate func(p tview.Primitive)) {
-	v.form.Focus(delegate)
+	if v.activeTab == systemTabSettings {
+		v.form.Focus(delegate)
+		return
+	}
+	v.Box.Focus(delegate)
 }
 
 func (v *settingsView) HasFocus() bool {
@@ -259,14 +331,64 @@ func (v *settingsView) HasFocus() bool {
 
 func (v *settingsView) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
 	return v.WrapInputHandler(func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
-		if handler := v.form.InputHandler(); handler != nil {
-			handler(event, setFocus)
+		if v.handleTabShortcut(event, setFocus) {
+			return
+		}
+		if v.activeTab == systemTabSettings {
+			if handler := v.form.InputHandler(); handler != nil {
+				handler(event, setFocus)
+			}
 		}
 	})
 }
 
+func (v *settingsView) handleTabShortcut(event *tcell.EventKey, setFocus func(p tview.Primitive)) bool {
+	if v.activeTab == systemTabSettings && v.app != nil && v.app.app != nil && acceptsTextInput(v.app.app.GetFocus()) {
+		return false
+	}
+	if event.Key() != tcell.KeyRune {
+		return false
+	}
+	switch event.Rune() {
+	case '[':
+		v.setActiveTab(v.activeTab-1, setFocus)
+		return true
+	case ']':
+		v.setActiveTab(v.activeTab+1, setFocus)
+		return true
+	case '1':
+		v.setActiveTab(systemTabAbout, setFocus)
+		return true
+	case '2':
+		v.setActiveTab(systemTabSettings, setFocus)
+		return true
+	case '3':
+		v.setActiveTab(systemTabProperties, setFocus)
+		return true
+	}
+	return false
+}
+
+func (v *settingsView) setActiveTab(tab systemTab, setFocus func(tview.Primitive)) {
+	if tab < systemTabAbout {
+		tab = systemTabProperties
+	}
+	if tab > systemTabProperties {
+		tab = systemTabAbout
+	}
+	v.activeTab = tab
+	if tab == systemTabSettings {
+		v.form.Focus(setFocus)
+		return
+	}
+	setFocus(v)
+}
+
 func (v *settingsView) PasteHandler() func(pastedText string, setFocus func(p tview.Primitive)) {
 	return v.WrapPasteHandler(func(pastedText string, setFocus func(p tview.Primitive)) {
+		if v.activeTab != systemTabSettings {
+			return
+		}
 		if handler := v.form.PasteHandler(); handler != nil {
 			handler(pastedText, setFocus)
 		}
@@ -285,27 +407,35 @@ func (v *settingsView) MouseHandler() func(action tview.MouseAction, event *tcel
 			}
 			setFocus(p)
 		}
+		if action == tview.MouseLeftDown {
+			for index, rect := range v.tabRects {
+				if rect.contains(x, y) {
+					v.setActiveTab(systemTab(index), wrappedSetFocus)
+					return true, nil
+				}
+			}
+		}
 
 		switch action {
 		case tview.MouseScrollUp:
-			if v.formRect.contains(x, y) {
+			if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
 				v.moveFormFocus(-1, wrappedSetFocus)
 				return true, nil
 			}
 		case tview.MouseScrollDown:
-			if v.formRect.contains(x, y) {
+			if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
 				v.moveFormFocus(1, wrappedSetFocus)
 				return true, nil
 			}
 		}
 
-		if v.formRect.contains(x, y) {
+		if v.activeTab == systemTabSettings && v.formRect.contains(x, y) {
 			if handler := v.form.MouseHandler(); handler != nil {
 				return handler(action, event, wrappedSetFocus)
 			}
 		}
 		if action == tview.MouseLeftDown {
-			v.form.Focus(wrappedSetFocus)
+			v.setActiveTab(v.activeTab, wrappedSetFocus)
 			return true, nil
 		}
 		return false, nil
@@ -345,15 +475,65 @@ func (v *settingsView) currentFormFocus() int {
 
 func (v *settingsView) save() {
 	v.cfg.Settings = v.settings
-	cfg := v.app.apply(v.cfg)
+	cfg := v.cfg
+	endpoints := enabledEndpoints(cfg.Account.Endpoints)
+	if len(endpoints) > 1 && v.app != nil && v.app.client != nil {
+		v.setStatusText(v.statusText("Validating endpoints before save...", cfg.Account.Endpoints, nil, true, ""))
+		go v.validateAndSave(cfg, endpoints)
+		return
+	}
+	v.finishSave(cfg, "Saved")
+}
+
+func (v *settingsView) validateAndSave(cfg models.Config, endpoints []models.Endpoint) {
+	baseCtx := context.Background()
+	if v.app != nil && v.app.ctx != nil {
+		baseCtx = v.app.ctx
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, settingsProbeTimeout)
+	identities := v.app.client.ProbeEndpointIdentities(ctx, endpoints)
+	cancel()
+	err := validateEndpointIdentities(identities)
+	v.queueUpdate(func() {
+		if err != nil {
+			v.setStatusText(v.identityStatusText("Save failed: "+err.Error(), identities))
+			return
+		}
+		v.finishSave(cfg, "Saved")
+	})
+}
+
+func validateEndpointIdentities(identities []subsonic.EndpointIdentity) error {
+	if len(identities) <= 1 {
+		return nil
+	}
+	var fingerprint string
+	for _, identity := range identities {
+		if identity.Err != nil {
+			return fmt.Errorf("%s: %w", identity.Endpoint.URL, identity.Err)
+		}
+		if fingerprint == "" {
+			fingerprint = identity.Fingerprint
+			continue
+		}
+		if identity.Fingerprint != fingerprint {
+			return errors.New("Endpoints appear to point to different libraries")
+		}
+	}
+	return nil
+}
+
+func (v *settingsView) finishSave(cfg models.Config, message string) {
+	cfg = v.app.apply(cfg)
 	v.cfg = cfg
 	v.settings = cfg.Settings
 	v.app.cfg = cfg
 	if err := v.saveConfig(cfg); err != nil {
+		v.setStatusText(v.statusText("Save failed: "+err.Error(), cfg.Account.Endpoints, nil, false, ""))
 		v.app.modal("Save failed", err.Error())
 		return
 	}
-	v.startProbeNow("Saved")
+	v.startProbeNow(message)
 }
 
 func (v *settingsView) startProbeAfterDelay(message string) {
@@ -435,24 +615,19 @@ func (v *settingsView) statusText(message string, endpoints []models.Endpoint, p
 	if message != "" {
 		builder.WriteString("[::b]")
 		builder.WriteString(tview.Escape(message))
-		builder.WriteString("[-]\n\n")
+		builder.WriteString("[-]\n")
 	}
 	if fallback != "" {
 		builder.WriteString(tview.Escape(fallback))
-		return builder.String()
+		return strings.TrimRight(builder.String(), "\n")
 	}
 	if len(endpoints) == 0 {
 		builder.WriteString("No endpoints configured.")
-		return builder.String()
+		return strings.TrimRight(builder.String(), "\n")
 	}
 	if checking {
-		builder.WriteString("Checking endpoints...\n")
-		for _, endpoint := range endpoints {
-			builder.WriteString("  ")
-			builder.WriteString(tview.Escape(endpoint.URL))
-			builder.WriteByte('\n')
-		}
-		return builder.String()
+		builder.WriteString("Checking endpoints...")
+		return strings.TrimRight(builder.String(), "\n")
 	}
 
 	activeURL := ""
@@ -473,12 +648,145 @@ func (v *settingsView) statusText(message string, endpoints []models.Endpoint, p
 			builder.WriteString("[red]ERR[-] ")
 			builder.WriteString(tview.Escape(shortEndpointError(probe.Err)))
 		}
-		builder.WriteByte('\n')
-		builder.WriteString("  ")
+		builder.WriteByte(' ')
 		builder.WriteString(tview.Escape(probe.Endpoint.URL))
 		builder.WriteByte('\n')
 	}
 	return strings.TrimRight(builder.String(), "\n")
+}
+
+func (v *settingsView) identityStatusText(message string, identities []subsonic.EndpointIdentity) string {
+	var builder strings.Builder
+	if message != "" {
+		builder.WriteString("[red]")
+		builder.WriteString(tview.Escape(message))
+		builder.WriteString("[-]\n")
+	}
+	for _, identity := range identities {
+		if identity.Err != nil {
+			builder.WriteString("  [red]ERR[-] ")
+			builder.WriteString(tview.Escape(shortEndpointError(identity.Err)))
+		} else {
+			builder.WriteString("  [green]OK[-] artists=")
+			builder.WriteString(strconv.Itoa(identity.ArtistCount))
+		}
+		builder.WriteByte(' ')
+		builder.WriteString(tview.Escape(identity.Endpoint.URL))
+		builder.WriteByte('\n')
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func (v *settingsView) aboutText() string {
+	endpoint := "Not connected"
+	if v.app != nil && v.app.client != nil {
+		if active := v.app.client.ActiveEndpoint(); active.URL != "" {
+			endpoint = active.URL
+		}
+	}
+	return fmt.Sprintf("This is Saki %s\nMade with music by Nemo Xiong\nRepository: https://github.com/xiongnemo/Saki\n\nConnected endpoint:\n%s", version.String(), endpoint)
+}
+
+func (v *settingsView) propertiesText() string {
+	var builder strings.Builder
+	writeProperty := func(label, value string) {
+		builder.WriteString("[#8ee3ff]")
+		builder.WriteString(label)
+		builder.WriteString("[-] ")
+		builder.WriteString(tview.Escape(value))
+		builder.WriteByte('\n')
+	}
+
+	configPath := "Unavailable"
+	if v.app != nil {
+		if path, err := v.app.store.Path(); err == nil {
+			configPath = path
+		}
+	}
+	activeEndpoint := "Not connected"
+	if v.app != nil && v.app.client != nil {
+		if active := v.app.client.ActiveEndpoint(); active.URL != "" {
+			activeEndpoint = active.URL
+		}
+	}
+	writeProperty("Config path", configPath)
+	writeProperty("Username", fallbackText(v.cfg.Account.Username, "Not configured"))
+	writeProperty("Active endpoint", activeEndpoint)
+	writeProperty("Endpoints", fmt.Sprintf("%d enabled / %d total", len(enabledEndpoints(v.cfg.Account.Endpoints)), len(v.cfg.Account.Endpoints)))
+	writeProperty("Audio backend", fallbackText(v.cfg.Settings.AudioBackend, "auto"))
+	writeProperty("MPV path", fallbackText(v.cfg.Settings.MPVPath, "PATH lookup"))
+	writeProperty("Bundled mpv", onOffOptions[boolOption(v.cfg.Settings.UseBundledMPV)])
+	writeProperty("Cache dir", resolvedAudioCacheDir(v.cfg.Settings))
+	writeProperty("Audio cache limit", formatBytes(v.cfg.Settings.AudioCacheMaxBytes))
+	writeProperty("Health interval", fmt.Sprintf("%ds", v.cfg.Settings.HealthCheckIntervalSeconds))
+	writeProperty("OS/Arch", runtime.GOOS+"/"+runtime.GOARCH)
+
+	builder.WriteByte('\n')
+	state := models.CurrentState{}
+	if v.app != nil && v.app.player != nil {
+		state = v.app.player.State()
+	}
+	if state.CurrentTrack == nil {
+		builder.WriteString("No track loaded")
+		return strings.TrimRight(builder.String(), "\n")
+	}
+	writeProperty("Current track", state.CurrentTrack.Artist+" :: "+state.CurrentTrack.Album+" :: "+state.CurrentTrack.Title)
+	if label := audioInfoLabel(state.AudioInfo, 80); label != "" {
+		writeProperty("Audio input", label)
+	} else {
+		writeProperty("Audio input", "Unknown")
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func resolvedAudioCacheDir(settings models.Settings) string {
+	cacheDir := settings.CacheDir
+	if cacheDir == "" {
+		if userCache, err := os.UserCacheDir(); err == nil {
+			cacheDir = filepath.Join(userCache, "saki")
+		} else {
+			cacheDir = filepath.Join(os.TempDir(), "saki")
+		}
+	}
+	return filepath.Join(cacheDir, "audio")
+}
+
+func fallbackText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func formatBytes(bytes int64) string {
+	if bytes <= 0 {
+		return "0 B"
+	}
+	const mib = 1024 * 1024
+	const gib = 1024 * mib
+	if bytes%gib == 0 {
+		return fmt.Sprintf("%d GiB", bytes/gib)
+	}
+	if bytes >= gib {
+		return fmt.Sprintf("%.1f GiB", float64(bytes)/gib)
+	}
+	if bytes%mib == 0 {
+		return fmt.Sprintf("%d MiB", bytes/mib)
+	}
+	if bytes >= mib {
+		return fmt.Sprintf("%.1f MiB", float64(bytes)/mib)
+	}
+	return fmt.Sprintf("%d B", bytes)
+}
+
+func enabledEndpoints(endpoints []models.Endpoint) []models.Endpoint {
+	enabled := make([]models.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.Enabled && strings.TrimSpace(endpoint.URL) != "" {
+			enabled = append(enabled, endpoint)
+		}
+	}
+	return enabled
 }
 
 func shortEndpointError(err error) string {

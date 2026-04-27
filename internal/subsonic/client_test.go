@@ -289,6 +289,72 @@ func TestProbeEndpointsRespectsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestProbeEndpointIdentitiesFingerprintsArtists(t *testing.T) {
+	first := artistIdentityServer(t, []map[string]any{
+		{"id": "ar-1", "name": "Artist", "albumCount": 2},
+	})
+	defer first.Close()
+	second := artistIdentityServer(t, []map[string]any{
+		{"id": "ar-1", "name": "Artist", "albumCount": 2},
+	})
+	defer second.Close()
+	third := artistIdentityServer(t, []map[string]any{
+		{"id": "ar-2", "name": "Other", "albumCount": 1},
+	})
+	defer third.Close()
+
+	client := NewClient(first.Client())
+	client.Configure(configForURL(first.URL))
+	results := client.ProbeEndpointIdentities(context.Background(), []models.Endpoint{
+		{Name: "first", URL: first.URL, Enabled: true},
+		{Name: "second", URL: second.URL, Enabled: true},
+		{Name: "third", URL: third.URL, Enabled: true},
+	})
+	if len(results) != 3 {
+		t.Fatalf("expected three identities, got %d", len(results))
+	}
+	for _, result := range results {
+		if result.Err != nil {
+			t.Fatalf("identity error for %s: %v", result.Endpoint.URL, result.Err)
+		}
+		if result.Fingerprint == "" || result.ArtistCount != 1 {
+			t.Fatalf("identity = %#v", result)
+		}
+	}
+	if results[0].Fingerprint != results[1].Fingerprint {
+		t.Fatalf("same library fingerprints differ: %s vs %s", results[0].Fingerprint, results[1].Fingerprint)
+	}
+	if results[0].Fingerprint == results[2].Fingerprint {
+		t.Fatal("different libraries produced the same fingerprint")
+	}
+}
+
+func artistIdentityServer(t *testing.T, artists []map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/ping.view":
+			_ = json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{
+				"status":  "ok",
+				"version": "1.16.1",
+				"type":    "navidrome",
+			}})
+		case "/rest/getArtists":
+			_ = json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{
+				"status": "ok",
+				"artists": map[string]any{
+					"index": []any{map[string]any{
+						"name":   "A",
+						"artist": artists,
+					}},
+				},
+			}})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+}
+
 func configForURL(rawURL string) models.Config {
 	return models.Config{
 		Account: models.Account{

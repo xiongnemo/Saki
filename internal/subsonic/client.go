@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,9 +142,20 @@ type EndpointStatus struct {
 }
 
 type EndpointProbe struct {
-	Endpoint models.Endpoint
-	Latency  time.Duration
-	Err      error
+	Endpoint      models.Endpoint
+	Latency       time.Duration
+	ServerVersion string
+	ServerType    string
+	Err           error
+}
+
+type EndpointIdentity struct {
+	Endpoint      models.Endpoint
+	Fingerprint   string
+	ArtistCount   int
+	ServerVersion string
+	ServerType    string
+	Err           error
 }
 
 func (c *Client) ProbeEndpoints(ctx context.Context, endpoints []models.Endpoint) []EndpointProbe {
@@ -167,9 +180,42 @@ func (c *Client) ProbeEndpoints(ctx context.Context, endpoints []models.Endpoint
 		go func() {
 			defer wg.Done()
 			start := time.Now()
-			err := c.pingEndpoint(ctx, endpoint.URL)
+			info, err := c.pingEndpointInfo(ctx, endpoint.URL)
 			results[i].Latency = time.Since(start)
+			results[i].ServerVersion = info.Version
+			results[i].ServerType = info.Type
 			results[i].Err = err
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+func (c *Client) ProbeEndpointIdentities(ctx context.Context, endpoints []models.Endpoint) []EndpointIdentity {
+	results := make([]EndpointIdentity, len(endpoints))
+	if len(endpoints) == 0 {
+		return results
+	}
+
+	var wg sync.WaitGroup
+	for i, endpoint := range endpoints {
+		i, endpoint := i, normalizeProbeEndpoint(endpoint)
+		results[i].Endpoint = endpoint
+		if strings.TrimSpace(endpoint.URL) == "" {
+			results[i].Err = fmt.Errorf("empty endpoint URL")
+			continue
+		}
+		if !endpoint.Enabled {
+			results[i].Err = fmt.Errorf("endpoint disabled")
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			identity, err := c.endpointIdentity(ctx, endpoint)
+			identity.Endpoint = endpoint
+			identity.Err = err
+			results[i] = identity
 		}()
 	}
 	wg.Wait()
@@ -585,12 +631,62 @@ func (c *Client) checkAllEndpoints(ctx context.Context) {
 }
 
 func (c *Client) pingEndpoint(ctx context.Context, baseURL string) error {
+	_, err := c.pingEndpointInfo(ctx, baseURL)
+	return err
+}
+
+func (c *Client) pingEndpointInfo(ctx context.Context, baseURL string) (baseResponse, error) {
 	var wrapped response[baseResponse]
 	err := c.getFromBase(ctx, baseURL, "ping.view", nil, &wrapped)
 	if err != nil {
-		return err
+		return baseResponse{}, err
 	}
-	return checkStatus(wrapped.Data)
+	if err := checkStatus(wrapped.Data); err != nil {
+		return wrapped.Data, err
+	}
+	return wrapped.Data, nil
+}
+
+func (c *Client) endpointIdentity(ctx context.Context, endpoint models.Endpoint) (EndpointIdentity, error) {
+	ping, err := c.pingEndpointInfo(ctx, endpoint.URL)
+	if err != nil {
+		return EndpointIdentity{ServerVersion: ping.Version, ServerType: ping.Type}, err
+	}
+
+	var wrapped response[artistsResponse]
+	if err := c.getFromBase(ctx, endpoint.URL, "getArtists", nil, &wrapped); err != nil {
+		return EndpointIdentity{ServerVersion: ping.Version, ServerType: ping.Type}, err
+	}
+	if err := checkStatus(wrapped.Data.baseResponse); err != nil {
+		return EndpointIdentity{ServerVersion: ping.Version, ServerType: ping.Type}, err
+	}
+
+	fingerprint, count := artistsFingerprint(wrapped.Data)
+	return EndpointIdentity{
+		Endpoint:      endpoint,
+		Fingerprint:   fingerprint,
+		ArtistCount:   count,
+		ServerVersion: ping.Version,
+		ServerType:    ping.Type,
+	}, nil
+}
+
+func artistsFingerprint(data artistsResponse) (string, int) {
+	var entries []string
+	if data.Artists != nil {
+		for _, index := range data.Artists.Index {
+			for _, artist := range index.Artist {
+				entries = append(entries, artist.ID+"\x00"+artist.Name+"\x00"+strconv.Itoa(artist.AlbumCount))
+			}
+		}
+	}
+	sort.Strings(entries)
+	hash := sha256.New()
+	for _, entry := range entries {
+		hash.Write([]byte(entry))
+		hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil)), len(entries)
 }
 
 func (c *Client) markEndpointResult(baseURL string, latency time.Duration, err error) {

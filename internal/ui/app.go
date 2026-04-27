@@ -38,7 +38,7 @@ var (
 
 const (
 	playingPanelHeight       = 5
-	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | / Search View | C-s Settings"
+	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | / Search View | C-s System"
 	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
@@ -951,7 +951,7 @@ func (a *App) showSettings(push bool) {
 	}
 
 	view := newSettingsView(a, a.cfg)
-	a.setContentWithFocus("Settings", view, view.form)
+	a.setContentWithFocus("System", view, view.form)
 	a.contentOwnsTab = true
 	view.startProbeNow("")
 }

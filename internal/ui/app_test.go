@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +247,17 @@ func TestSettingsStartsOnAudioBackend(t *testing.T) {
 		},
 	}
 	app.showSettings(false)
+	_, item := app.content.GetFrontPage()
+	view, ok := item.(*settingsView)
+	if !ok {
+		t.Fatalf("settings page = %T, want settingsView", item)
+	}
+	if got := view.GetTitle(); got != " Saki :: System " {
+		t.Fatalf("system title = %q", got)
+	}
+	if view.activeTab != systemTabSettings {
+		t.Fatalf("initial tab = %v, want settings", view.activeTab)
+	}
 	form, ok := app.contentFocus.(*tview.Form)
 	if !ok {
 		t.Fatalf("content focus = %T, want form", app.contentFocus)
@@ -325,11 +337,91 @@ func TestSettingsResponsiveFieldsStayInsideForm(t *testing.T) {
 	screen.SetSize(160, 20)
 	view.SetRect(0, 0, 160, 20)
 	view.Draw(screen)
-	if view.formRect.width > settingsFormMaxWidth {
-		t.Fatalf("wide settings form width = %d, want <= %d", view.formRect.width, settingsFormMaxWidth)
+	if view.statusRect.width != view.contentRect.width {
+		t.Fatalf("ping width = %d, content width = %d", view.statusRect.width, view.contentRect.width)
 	}
-	if view.statusRect.width < settingsStatusMinWidth {
-		t.Fatalf("wide status width = %d, want >= %d", view.statusRect.width, settingsStatusMinWidth)
+	if view.statusRect.y <= view.contentRect.y {
+		t.Fatalf("ping should be below content: content=%+v ping=%+v", view.contentRect, view.statusRect)
+	}
+}
+
+func TestSystemTabsRenderAboutAndProperties(t *testing.T) {
+	client := subsonic.NewClient(nil)
+	cfg := models.Config{
+		Account: models.Account{
+			Username:  "nemo",
+			Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}},
+		},
+		Settings: models.Settings{
+			AudioBackend:               "miniaudio",
+			AudioCacheMaxBytes:         2048 * 1024 * 1024,
+			HealthCheckIntervalSeconds: 5,
+			EndpointSwitchThreshold:    0.3,
+		},
+	}
+	client.Configure(cfg)
+	app := &App{app: tview.NewApplication(), client: client, cfg: cfg}
+	view := newSettingsView(app, cfg)
+
+	view.setActiveTab(systemTabAbout, func(p tview.Primitive) { app.app.SetFocus(p) })
+	about := view.aboutText()
+	for _, want := range []string{"This is Saki", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example"} {
+		if !strings.Contains(about, want) {
+			t.Fatalf("about text missing %q: %q", want, about)
+		}
+	}
+
+	view.setActiveTab(systemTabProperties, func(p tview.Primitive) { app.app.SetFocus(p) })
+	props := view.propertiesText()
+	for _, want := range []string{"Config path", "Username", "Active endpoint", "Audio backend", "OS/Arch", "No track loaded"} {
+		if !strings.Contains(props, want) {
+			t.Fatalf("properties text missing %q: %q", want, props)
+		}
+	}
+}
+
+func TestSystemTabShortcutsSwitchTabs(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	view := newSettingsView(app, models.Config{})
+	handler := view.InputHandler()
+	if handler == nil {
+		t.Fatal("expected input handler")
+	}
+	setFocus := func(p tview.Primitive) { app.app.SetFocus(p) }
+
+	handler(tcell.NewEventKey(tcell.KeyRune, '1', tcell.ModNone), setFocus)
+	if view.activeTab != systemTabAbout {
+		t.Fatalf("tab after 1 = %v, want about", view.activeTab)
+	}
+	handler(tcell.NewEventKey(tcell.KeyRune, ']', tcell.ModNone), setFocus)
+	if view.activeTab != systemTabSettings {
+		t.Fatalf("tab after ] = %v, want settings", view.activeTab)
+	}
+	handler(tcell.NewEventKey(tcell.KeyRune, '3', tcell.ModNone), setFocus)
+	if view.activeTab != systemTabProperties {
+		t.Fatalf("tab after 3 = %v, want properties", view.activeTab)
+	}
+}
+
+func TestValidateEndpointIdentitiesRejectsDifferentLibraries(t *testing.T) {
+	err := validateEndpointIdentities([]subsonic.EndpointIdentity{
+		{Endpoint: models.Endpoint{URL: "https://one.example"}, Fingerprint: "one"},
+		{Endpoint: models.Endpoint{URL: "https://two.example"}, Fingerprint: "two"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "different libraries") {
+		t.Fatalf("validation err = %v", err)
+	}
+	if err := validateEndpointIdentities([]subsonic.EndpointIdentity{
+		{Endpoint: models.Endpoint{URL: "https://one.example"}, Fingerprint: "same"},
+		{Endpoint: models.Endpoint{URL: "https://two.example"}, Fingerprint: "same"},
+	}); err != nil {
+		t.Fatalf("same library validation err = %v", err)
+	}
+	if err := validateEndpointIdentities([]subsonic.EndpointIdentity{
+		{Endpoint: models.Endpoint{URL: "https://one.example"}, Err: context.Canceled},
+		{Endpoint: models.Endpoint{URL: "https://two.example"}, Fingerprint: "same"},
+	}); err == nil || !strings.Contains(err.Error(), "https://one.example") {
+		t.Fatalf("endpoint error validation err = %v", err)
 	}
 }
 

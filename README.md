@@ -27,7 +27,7 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Multiple playback backends: default `auto` tries miniaudio first for MP3/WAV/FLAC and Range-capable or completed-cache ALAC/M4A, then falls back to optional `mpv` for unsupported sources.
 - Local stream proxy with playback-time buffering and completed-file audio cache.
 - Seeking support when the current backend/source can provide a seekable stream or cached file.
-- Settings screen for endpoints, live endpoint ping/status, audio backend, cache size, and fallback behavior.
+- System page with About, Settings, runtime properties, endpoint validation, and live endpoint ping/status.
 - Windows SMTC integration through a small C++/WinRT DLL shim.
 - Versioned builds and `--version` / `-v` output with branch, commit, and dirty state.
 
@@ -63,8 +63,8 @@ go run ./cmd/saki --version
 ```
 
 For local playback, install `mpv` so `mpv.exe` is on `PATH`, or set the full
-`mpv.exe` path in the Settings screen if you want to use the optional mpv
-backend. Settings are available from the main screen with `Ctrl+S`.
+`mpv.exe` path in the System page if you want to use the optional mpv
+backend. System is available from the main screen with `Ctrl+S`.
 
 ## Build On Windows
 
@@ -80,7 +80,7 @@ executable. The default miniaudio backend uses cgo, so Windows builds also need
 a working MinGW-w64/GCC toolchain. If you already have a built shim and only
 want to skip rebuilding it, pass `-SkipSMTC`.
 
-`mpv` is optional. Install it or set its path in Settings only when using the
+`mpv` is optional. Install it or set its path in System only when using the
 `mpv` backend or the `auto` fallback for non-seekable or unsupported sources.
 
 ## Runtime Requirements
