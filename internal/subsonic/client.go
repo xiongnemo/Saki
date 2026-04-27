@@ -139,6 +139,48 @@ type EndpointStatus struct {
 	Successes int
 }
 
+type EndpointProbe struct {
+	Endpoint models.Endpoint
+	Latency  time.Duration
+	Err      error
+}
+
+func (c *Client) ProbeEndpoints(ctx context.Context, endpoints []models.Endpoint) []EndpointProbe {
+	results := make([]EndpointProbe, len(endpoints))
+	if len(endpoints) == 0 {
+		return results
+	}
+
+	var wg sync.WaitGroup
+	for i, endpoint := range endpoints {
+		i, endpoint := i, normalizeProbeEndpoint(endpoint)
+		results[i].Endpoint = endpoint
+		if strings.TrimSpace(endpoint.URL) == "" {
+			results[i].Err = fmt.Errorf("empty endpoint URL")
+			continue
+		}
+		if !endpoint.Enabled {
+			results[i].Err = fmt.Errorf("endpoint disabled")
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start := time.Now()
+			err := c.pingEndpoint(ctx, endpoint.URL)
+			results[i].Latency = time.Since(start)
+			results[i].Err = err
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+func normalizeProbeEndpoint(endpoint models.Endpoint) models.Endpoint {
+	endpoint.URL = strings.TrimRight(strings.TrimSpace(endpoint.URL), "/")
+	return endpoint
+}
+
 func (c *Client) StartHealthChecks(ctx context.Context) {
 	interval := time.Duration(c.healthIntervalSeconds()) * time.Second
 	if interval <= 0 {

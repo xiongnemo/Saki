@@ -100,3 +100,13 @@ Status: completed.
 - [x] Split Controls into view/navigation shortcuts and playback shortcuts.
 - [x] Keep Playing and Controls mouse-passive so they do not take focus.
 - [x] Verify with focused UI tests and `go test ./...`.
+
+## Settings Responsive Layout and Endpoint Ping
+
+Status: completed.
+
+- [x] Replace the fixed-width Settings form layout with a responsive Settings container.
+- [x] Keep Settings editable after Save and show save/ping status inline.
+- [x] Add a read-only Subsonic endpoint probe API with a 5s UI timeout.
+- [x] Keep Settings Tab/Shift+Tab navigation inside the form instead of jumping to Queue.
+- [x] Verify small-window layout, keyboard navigation, endpoint probing, and existing regressions.

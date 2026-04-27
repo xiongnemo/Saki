@@ -3,10 +3,12 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/subsonic"
 )
 
 func TestProgressBar(t *testing.T) {
@@ -253,6 +255,132 @@ func TestSettingsStartsOnAudioBackend(t *testing.T) {
 	})
 	if focus, ok := app.app.GetFocus().(*tview.DropDown); !ok || focus.GetLabel() != "Audio backend" {
 		t.Fatalf("settings focus = %T %[1]v, want Audio backend dropdown", app.app.GetFocus())
+	}
+}
+
+func TestSettingsKeepsTabInsideForm(t *testing.T) {
+	app := &App{
+		app:     tview.NewApplication(),
+		content: tview.NewPages(),
+		queue:   tview.NewList(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+			Settings: models.Settings{
+				AudioBackend:               "miniaudio",
+				AudioCacheMaxBytes:         2048 * 1024 * 1024,
+				HealthCheckIntervalSeconds: 5,
+				EndpointSwitchThreshold:    0.3,
+			},
+		},
+	}
+	app.showSettings(false)
+
+	tab := tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)
+	if got := app.handleGlobalKey(tab); got != tab {
+		t.Fatal("settings should pass tab to the form")
+	}
+	if app.app.GetFocus() == app.queue || app.focusTarget != appFocusContent {
+		t.Fatalf("settings tab moved focus to queue: focus=%T target=%v", app.app.GetFocus(), app.focusTarget)
+	}
+}
+
+func TestSettingsResponsiveFieldsStayInsideForm(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	view := newSettingsView(app, models.Config{
+		Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		Settings: models.Settings{
+			AudioBackend:               "miniaudio",
+			AudioCacheMaxBytes:         2048 * 1024 * 1024,
+			HealthCheckIntervalSeconds: 5,
+			EndpointSwitchThreshold:    0.3,
+		},
+	})
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+
+	screen.SetSize(56, 14)
+	view.SetRect(0, 0, 56, 14)
+	view.Draw(screen)
+
+	labelWidth := settingsFormLabelWidth(view.form)
+	available := view.formRect.width - labelWidth
+	for _, label := range []string{"Endpoints (; separated)", "MPV path", "Cache dir"} {
+		field, ok := view.form.GetFormItemByLabel(label).(*tview.InputField)
+		if !ok {
+			t.Fatalf("%s is %T, want input field", label, view.form.GetFormItemByLabel(label))
+		}
+		if field.GetFieldWidth() > available {
+			t.Fatalf("%s field width = %d, available = %d", label, field.GetFieldWidth(), available)
+		}
+		x, _, width, _ := field.GetRect()
+		if x+width > view.formRect.x+view.formRect.width {
+			t.Fatalf("%s rect overflows form: x=%d width=%d form=%+v", label, x, width, view.formRect)
+		}
+	}
+
+	screen.SetSize(160, 20)
+	view.SetRect(0, 0, 160, 20)
+	view.Draw(screen)
+	if view.formRect.width > settingsFormMaxWidth {
+		t.Fatalf("wide settings form width = %d, want <= %d", view.formRect.width, settingsFormMaxWidth)
+	}
+	if view.statusRect.width < settingsStatusMinWidth {
+		t.Fatalf("wide status width = %d, want >= %d", view.statusRect.width, settingsStatusMinWidth)
+	}
+}
+
+func TestSettingsSaveStaysOnSettingsView(t *testing.T) {
+	app := &App{
+		app:     tview.NewApplication(),
+		content: tview.NewPages(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+			Settings: models.Settings{
+				AudioBackend:               "miniaudio",
+				AudioCacheMaxBytes:         2048 * 1024 * 1024,
+				HealthCheckIntervalSeconds: 5,
+				EndpointSwitchThreshold:    0.3,
+			},
+		},
+		applyConfig: func(cfg models.Config) models.Config { return cfg },
+	}
+	app.showSettings(false)
+	_, item := app.content.GetFrontPage()
+	view, ok := item.(*settingsView)
+	if !ok {
+		t.Fatalf("settings page = %T, want settingsView", item)
+	}
+	view.saveConfig = func(models.Config) error { return nil }
+
+	view.save()
+	_, after := app.content.GetFrontPage()
+	if after != view {
+		t.Fatalf("save replaced settings page with %T", after)
+	}
+	if !strings.Contains(view.status.GetText(true), "Saved") {
+		t.Fatalf("save status = %q, want Saved", view.status.GetText(true))
+	}
+}
+
+func TestSettingsProbeStatusRendersResults(t *testing.T) {
+	client := subsonic.NewClient(nil)
+	cfg := models.Config{
+		Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+	}
+	client.Configure(cfg)
+	app := &App{app: tview.NewApplication(), client: client}
+	view := newSettingsView(app, cfg)
+
+	text := view.statusText("", cfg.Account.Endpoints, []subsonic.EndpointProbe{{
+		Endpoint: cfg.Account.Endpoints[0],
+		Latency:  12 * time.Millisecond,
+	}}, false, "")
+	if !strings.Contains(text, "OK") || !strings.Contains(text, "12ms") || !strings.Contains(text, "https://music.example") {
+		t.Fatalf("probe status text = %q", text)
 	}
 }
 

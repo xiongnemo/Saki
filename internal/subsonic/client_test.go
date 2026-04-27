@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,6 +201,91 @@ func TestHealthCheckSwitchesToConsistentlyFasterEndpoint(t *testing.T) {
 
 	if client.ActiveEndpoint().URL != fast.URL {
 		t.Fatalf("expected active endpoint to switch to fast, got %#v", client.ActiveEndpoint())
+	}
+}
+
+func TestProbeEndpointsReportsLatencyWithoutMutatingHealthState(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/rest/ping.view" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{"status": "ok"}})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.Configure(configForURL(server.URL))
+	before := client.EndpointStatuses()
+
+	results := client.ProbeEndpoints(context.Background(), []models.Endpoint{{Name: "Test", URL: server.URL, Enabled: true}})
+	if len(results) != 1 {
+		t.Fatalf("expected one probe, got %d", len(results))
+	}
+	if results[0].Err != nil {
+		t.Fatalf("probe err = %v", results[0].Err)
+	}
+	if results[0].Latency <= 0 {
+		t.Fatalf("expected positive latency, got %v", results[0].Latency)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one request, got %d", requests)
+	}
+
+	after := client.EndpointStatuses()
+	if before[0].Failures != after[0].Failures || before[0].Successes != after[0].Successes || before[0].EWMA != after[0].EWMA {
+		t.Fatalf("probe mutated health state: before=%#v after=%#v", before[0], after[0])
+	}
+}
+
+func TestProbeEndpointsReportsHTTPAndSubsonicErrors(t *testing.T) {
+	httpErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer httpErr.Close()
+	apiErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{
+			"status": "failed",
+			"error":  map[string]any{"code": 40, "message": "bad auth"},
+		}})
+	}))
+	defer apiErr.Close()
+
+	client := NewClient(httpErr.Client())
+	client.Configure(configForURL(httpErr.URL))
+	results := client.ProbeEndpoints(context.Background(), []models.Endpoint{
+		{Name: "http", URL: httpErr.URL, Enabled: true},
+		{Name: "api", URL: apiErr.URL, Enabled: true},
+	})
+	if len(results) != 2 {
+		t.Fatalf("expected two probes, got %d", len(results))
+	}
+	if results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "HTTP 502") {
+		t.Fatalf("HTTP error probe err = %v", results[0].Err)
+	}
+	if results[1].Err == nil || !strings.Contains(results[1].Err.Error(), "bad auth") {
+		t.Fatalf("Subsonic error probe err = %v", results[1].Err)
+	}
+}
+
+func TestProbeEndpointsRespectsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client())
+	client.Configure(configForURL(server.URL))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	results := client.ProbeEndpoints(ctx, []models.Endpoint{{Name: "Test", URL: server.URL, Enabled: true}})
+	if len(results) != 1 {
+		t.Fatalf("expected one probe, got %d", len(results))
+	}
+	if results[0].Err == nil {
+		t.Fatal("expected canceled context error")
 	}
 }
 

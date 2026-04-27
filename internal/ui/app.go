@@ -15,7 +15,6 @@ import (
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/player"
 	"github.com/xiongnemo/saki/internal/subsonic"
-	"github.com/xiongnemo/saki/internal/version"
 )
 
 var (
@@ -74,6 +73,7 @@ type App struct {
 	contentFocus      tview.Primitive
 	contentTabHandler func(back bool) bool
 	contentReturn     func(back bool) bool
+	contentOwnsTab    bool
 	contentMouseLists []*tview.List
 	lastClickList     *tview.List
 	lastClickIndex    int
@@ -244,10 +244,16 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		a.stop()
 		return nil
 	case tcell.KeyTab:
+		if a.contentOwnsTab && a.focusTarget == appFocusContent {
+			return event
+		}
 		if a.handleFocusTraversal(false) {
 			return nil
 		}
 	case tcell.KeyBacktab:
+		if a.contentOwnsTab && a.focusTarget == appFocusContent {
+			return event
+		}
 		if a.handleFocusTraversal(true) {
 			return nil
 		}
@@ -944,91 +950,10 @@ func (a *App) showSettings(push bool) {
 		a.pushHistory(func() { a.showSettings(false) })
 	}
 
-	cfg := a.cfg
-	settings := cfg.Settings
-	endpointsText := endpointsToText(cfg.Account.Endpoints)
-	cacheMaxMB := settings.AudioCacheMaxBytes / 1024 / 1024
-	if cacheMaxMB <= 0 {
-		cacheMaxMB = 2048
-	}
-
-	form := tview.NewForm().
-		AddTextView("Version", version.String(), 72, 1, false, false).
-		AddInputField("Endpoints (; separated)", endpointsText, 72, nil, func(value string) {
-			cfg.Account.Endpoints = parseEndpoints(value)
-		}).
-		AddDropDown("Audio backend", audioBackendLabels, audioBackendOption(settings.AudioBackend), func(_ string, index int) {
-			if index >= 0 && index < len(audioBackendValues) {
-				settings.AudioBackend = audioBackendValues[index]
-			}
-		}).
-		AddInputField("MPV path", settings.MPVPath, 72, nil, func(value string) {
-			settings.MPVPath = strings.TrimSpace(value)
-		}).
-		AddInputField("Cache dir", settings.CacheDir, 72, nil, func(value string) {
-			settings.CacheDir = strings.TrimSpace(value)
-		}).
-		AddInputField("Audio cache MB", strconv.FormatInt(cacheMaxMB, 10), 12, tview.InputFieldInteger, func(value string) {
-			if mb, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && mb > 0 {
-				settings.AudioCacheMaxBytes = mb * 1024 * 1024
-			}
-		}).
-		AddInputField("Health interval sec", strconv.Itoa(settings.HealthCheckIntervalSeconds), 8, tview.InputFieldInteger, func(value string) {
-			if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds > 0 {
-				settings.HealthCheckIntervalSeconds = seconds
-			}
-		}).
-		AddInputField("Switch threshold", fmt.Sprintf("%.2f", settings.EndpointSwitchThreshold), 8, nil, func(value string) {
-			if threshold, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil && threshold > 0 && threshold < 1 {
-				settings.EndpointSwitchThreshold = threshold
-			}
-		}).
-		AddDropDown("Prefetch", onOffOptions, boolOption(settings.EnablePrefetch), func(_ string, index int) {
-			settings.EnablePrefetch = index == 1
-		}).
-		AddDropDown("Bundled mpv", onOffOptions, boolOption(settings.UseBundledMPV), func(_ string, index int) {
-			settings.UseBundledMPV = index == 1
-		}).
-		AddButton("Save", func() {
-			cfg.Settings = settings
-			cfg = a.apply(cfg)
-			a.cfg = cfg
-			if err := a.store.Save(cfg); err != nil {
-				a.modal("Save failed", err.Error())
-				return
-			}
-			a.showEndpointStatus()
-		}).
-		AddButton("Back", func() {
-			a.goBack()
-		})
-
-	form.SetCancelFunc(func() {
-		a.goBack()
-	})
-	form.SetFocus(form.GetFormItemIndex("Audio backend"))
-	form.SetBorder(true)
-	setViewTitle(form, "Settings")
-	styleForm(form)
-	a.setContent("Settings", form)
-}
-
-func (a *App) showEndpointStatus() {
-	statuses := a.client.EndpointStatuses()
-	var builder strings.Builder
-	builder.WriteString("Settings saved.\n\nEndpoints:\n")
-	for _, status := range statuses {
-		active := " "
-		if status.Active {
-			active = "*"
-		}
-		latency := "-"
-		if status.EWMA > 0 {
-			latency = status.EWMA.Round(time.Millisecond).String()
-		}
-		builder.WriteString(fmt.Sprintf("%s %s  latency=%s failures=%d\n", active, status.Endpoint.URL, latency, status.Failures))
-	}
-	a.setContent("Settings", centeredText("Settings", builder.String()))
+	view := newSettingsView(a, a.cfg)
+	a.setContentWithFocus("Settings", view, view.form)
+	a.contentOwnsTab = true
+	view.startProbeNow("")
 }
 
 func (a *App) consumePlayerUpdates() {
@@ -1078,6 +1003,7 @@ func (a *App) setContentWithFocus(name string, item tview.Primitive, focus tview
 	a.content.AddAndSwitchToPage("content", item, true)
 	a.contentTabHandler = nil
 	a.contentReturn = nil
+	a.contentOwnsTab = false
 	a.contentMouseLists = listsFromPrimitive(item)
 	if focus == nil {
 		focus = item
