@@ -142,6 +142,19 @@ func (b *SwitchingBackend) Events() <-chan Event {
 	return b.events
 }
 
+func (b *SwitchingBackend) ActiveBackend() string {
+	switch b.active {
+	case nil:
+		return "none"
+	case b.miniaudio:
+		return "miniaudio"
+	case b.mpv:
+		return "mpv"
+	default:
+		return "custom"
+	}
+}
+
 func (b *SwitchingBackend) Close() error {
 	minErr := b.miniaudio.Close()
 	mpvErr := b.mpv.Close()

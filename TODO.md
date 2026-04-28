@@ -142,3 +142,14 @@ Status: completed.
 - [x] Remove duplicate About fields and add useful static technical/runtime information.
 - [x] Update About wording with requested emoji and product expansion text.
 - [x] Verify with UI tests and `go test ./...`, then commit.
+
+## System Popup and About Alignment Follow-Up
+
+Status: completed.
+
+- [x] Route all popup key/mouse events to the popup and prevent leakage to outer lists.
+- [x] Replace one-line text popup with a larger TextArea popup.
+- [x] Draw Settings rows with aligned themed labels and values.
+- [x] Draw About as intro plus Resolved Config and Media Support panels with aligned labels.
+- [x] Expose active audio backend and actual cover renderer status.
+- [x] Verify with focused UI/audio tests and `go test ./...`, then commit.

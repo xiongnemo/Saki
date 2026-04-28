@@ -119,6 +119,19 @@ func (s *Service) State() models.CurrentState {
 	return s.stateLocked()
 }
 
+func (s *Service) ActiveBackend() string {
+	type activeBackendReporter interface {
+		ActiveBackend() string
+	}
+	if reporter, ok := s.audio.(activeBackendReporter); ok {
+		return reporter.ActiveBackend()
+	}
+	if s.audio == nil {
+		return "none"
+	}
+	return "custom"
+}
+
 func (s *Service) PlayPause() {
 	if s.audio.IsPlaying() {
 		s.Pause()

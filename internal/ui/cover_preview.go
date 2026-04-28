@@ -40,6 +40,7 @@ type coverPreview struct {
 	*tview.Box
 
 	renderer coverRenderer
+	actual   coverRenderer
 	state    models.CurrentState
 
 	trackKey string
@@ -182,10 +183,12 @@ func (v *coverPreview) Draw(screen tcell.Screen) {
 		return
 	}
 	if v.renderer == coverRendererOff {
+		v.actual = coverRendererOff
 		v.unlockInline(screen)
 		return
 	}
 	if v.state.CurrentTrack == nil {
+		v.actual = v.renderer
 		v.unlockInline(screen)
 		tview.Print(screen, "No cover", x, y+height/2, width, tview.AlignCenter, uiMuted)
 		return
@@ -193,17 +196,49 @@ func (v *coverPreview) Draw(screen tcell.Screen) {
 
 	img := v.currentImage()
 	if img == nil {
+		v.actual = v.renderer
 		v.unlockInline(screen)
 		tview.Print(screen, "No cover", x, y+height/2, width, tview.AlignCenter, uiMuted)
 		return
 	}
 
 	if v.renderer != coverRendererCell && v.drawInline(screen, img, v.imageKey, x, y, width, height) {
+		v.actual = v.renderer
 		return
 	}
 
 	v.unlockInline(screen)
+	v.actual = coverRendererCell
 	drawCellCover(screen, img, x, y, width, height, defaultCoverCellRatio)
+}
+
+func supportedCoverRenderersLabel() string {
+	return "Kitty, iTerm2, Sixel, Cell"
+}
+
+func (v *coverPreview) ActiveRendererLabel() string {
+	if v == nil {
+		return coverRendererLabel(configuredCoverRenderer())
+	}
+	if v.actual != "" {
+		return coverRendererLabel(v.actual)
+	}
+	return coverRendererLabel(v.renderer)
+}
+
+func coverRendererLabel(renderer coverRenderer) string {
+	switch renderer {
+	case coverRendererKitty:
+		return "Kitty"
+	case coverRendererIterm:
+		return "iTerm2"
+	case coverRendererSixel:
+		return "Sixel"
+	case coverRendererOff:
+		return "Off"
+	default:
+		return "Cell"
+	}
 }
 
 func (v *coverPreview) currentImage() image.Image {
@@ -239,6 +274,7 @@ func (v *coverPreview) drawInline(screen coverTerminal, img image.Image, imageKe
 	signature := fmt.Sprintf("%s|%s|%d,%d,%d,%d", v.renderer, imageKey, drawX, drawY, drawWidth, drawHeight)
 	if v.lastInline.active && v.lastInline.signature == signature {
 		screen.LockRegion(drawX, drawY, drawWidth, drawHeight, true)
+		v.actual = v.renderer
 		return true
 	}
 
@@ -254,6 +290,7 @@ func (v *coverPreview) drawInline(screen coverTerminal, img image.Image, imageKe
 	if err != nil {
 		screen.LockRegion(drawX, drawY, drawWidth, drawHeight, false)
 		v.lastInline = inlineCoverState{}
+		v.actual = coverRendererCell
 		return false
 	}
 	v.lastInline = inlineCoverState{
@@ -264,6 +301,7 @@ func (v *coverPreview) drawInline(screen coverTerminal, img image.Image, imageKe
 		width:     drawWidth,
 		height:    drawHeight,
 	}
+	v.actual = v.renderer
 	return true
 }
 

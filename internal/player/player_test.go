@@ -139,6 +139,22 @@ func TestAudioFormatEventMergesWithSongMetadata(t *testing.T) {
 	})
 }
 
+func TestActiveBackendUsesReporterWhenAvailable(t *testing.T) {
+	backend := &fakeAudioWithActive{fakeAudio: newFakeAudio(), active: "mpv"}
+	service := New(subsonic.NewClient(nil), backend, newFakeMedia())
+	defer service.Close()
+
+	if got := service.ActiveBackend(); got != "mpv" {
+		t.Fatalf("active backend = %q, want mpv", got)
+	}
+
+	custom := New(subsonic.NewClient(nil), newFakeAudio(), newFakeMedia())
+	defer custom.Close()
+	if got := custom.ActiveBackend(); got != "custom" {
+		t.Fatalf("custom backend = %q, want custom", got)
+	}
+}
+
 func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 	backend := newFakeAudio()
 	backend.playing = true
@@ -268,6 +284,15 @@ func (f *fakeAudio) IsPlaying() bool            { return f.playing }
 func (f *fakeAudio) IsPaused() bool             { return f.paused }
 func (f *fakeAudio) Events() <-chan audio.Event { return f.events }
 func (f *fakeAudio) Close() error               { return nil }
+
+type fakeAudioWithActive struct {
+	*fakeAudio
+	active string
+}
+
+func (f *fakeAudioWithActive) ActiveBackend() string {
+	return f.active
+}
 
 type fakeMedia struct {
 	commands  chan mediaintegration.Command

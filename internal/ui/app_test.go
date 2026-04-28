@@ -258,24 +258,18 @@ func TestSettingsStartsOnList(t *testing.T) {
 	if view.activeTab != systemTabSettings {
 		t.Fatalf("initial tab = %v, want settings", view.activeTab)
 	}
-	list, ok := app.contentFocus.(*tview.List)
+	focus, ok := app.contentFocus.(*settingsView)
 	if !ok {
-		t.Fatalf("content focus = %T, want settings list", app.contentFocus)
+		t.Fatalf("content focus = %T, want settings view", app.contentFocus)
 	}
-	list.Focus(func(p tview.Primitive) {
+	focus.Focus(func(p tview.Primitive) {
 		app.app.SetFocus(p)
 	})
-	if app.app.GetFocus() != list {
-		t.Fatalf("settings focus = %T, want settings list", app.app.GetFocus())
+	if app.app.GetFocus() != focus {
+		t.Fatalf("settings focus = %T, want settings view", app.app.GetFocus())
 	}
-	if got, _ := list.GetItemText(0); !strings.Contains(got, "Endpoints") {
-		t.Fatalf("first settings row = %q, want Endpoints", got)
-	}
-	for i := 0; i < list.GetItemCount(); i++ {
-		text, _ := list.GetItemText(i)
-		if text == "Save settings" || text == "Back" {
-			t.Fatalf("settings action %q should not be a list row", text)
-		}
+	if len(view.settingsRows) == 0 || !strings.Contains(view.settingsRows[0].label, "Endpoints") {
+		t.Fatalf("first settings row = %+v, want Endpoints", view.settingsRows)
 	}
 }
 
@@ -345,6 +339,46 @@ func TestSettingsListAndPingStayInsideSystem(t *testing.T) {
 	}
 }
 
+func TestSettingsRowsAlignLabelsAndUseThemeColor(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	view := newSettingsView(app, models.Config{
+		Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		Settings: models.Settings{
+			AudioBackend:               "miniaudio",
+			AudioCacheMaxBytes:         2048 * 1024 * 1024,
+			HealthCheckIntervalSeconds: 5,
+			EndpointSwitchThreshold:    0.3,
+		},
+	})
+	view.selectedRow = 1
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(96, 22)
+	view.SetRect(0, 0, 96, 22)
+	view.Draw(screen)
+
+	labelX := view.settingsListRect.x
+	labelY := view.settingsListRect.y
+	ch, _, style, _ := screen.GetContent(labelX, labelY)
+	if ch != 'E' {
+		t.Fatalf("first label starts with %q, want E", ch)
+	}
+	fg, _, _ := style.Decompose()
+	if fg != uiLabel {
+		t.Fatalf("first label foreground = %v, want %v", fg, uiLabel)
+	}
+
+	valueX := view.settingsListRect.x + settingLabelWidth(view.settingsRows, view.settingsListRect.width)
+	ch, _, _, _ = screen.GetContent(valueX, labelY)
+	if ch != 'h' {
+		t.Fatalf("first value starts at x=%d with %q, want h", valueX, ch)
+	}
+}
+
 func TestSystemAboutIncludesProperties(t *testing.T) {
 	client := subsonic.NewClient(nil)
 	cfg := models.Config{
@@ -365,7 +399,7 @@ func TestSystemAboutIncludesProperties(t *testing.T) {
 
 	view.setActiveTab(systemTabAbout, func(p tview.Primitive) { app.app.SetFocus(p) })
 	about := view.aboutText()
-	for _, want := range []string{"This is Saki", "Subsonic Audio Klient for Individuals", "🎵&❤", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Properties", "Config path", "Username", "Audio backend", "OS/Arch", "Input decoders", "Audio output"} {
+	for _, want := range []string{"This is Saki", "Subsonic Audio Klient for Individuals", "♪&♥", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Resolved Config", "Media Support", "Config path", "Username", "Configured backend", "OS/Arch", "Configured decoders", "Audio output"} {
 		if !strings.Contains(about, want) {
 			t.Fatalf("about text missing %q: %q", want, about)
 		}
@@ -414,11 +448,11 @@ func TestSettingsEnterOpensEditPopup(t *testing.T) {
 	}
 	view := newSettingsView(app, app.cfg)
 	app.pages.AddPage("main", view, true, true)
-	app.app.SetFocus(view.settingsList)
+	app.app.SetFocus(view)
 
-	handler := view.settingsList.InputHandler()
+	handler := view.InputHandler()
 	if handler == nil {
-		t.Fatal("expected settings list input handler")
+		t.Fatal("expected settings input handler")
 	}
 	handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
 		app.app.SetFocus(p)
@@ -443,17 +477,25 @@ func TestSystemPopupBlocksGlobalNavigationAndEscapeCloses(t *testing.T) {
 	app.queue.AddItem("two", "", 0, nil)
 	app.queue.SetCurrentItem(0)
 	view := newSettingsView(app, app.cfg)
-	app.contentFocus = view.settingsList
+	app.contentFocus = view
 	app.focusTarget = appFocusQueue
 	app.pages.AddPage("main", view, true, true)
 	view.openEndpointPopup()
 
-	down := tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)
-	if got := app.handleGlobalKey(down); got != down {
-		t.Fatalf("popup should pass down to focused popup, got %v", got)
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)); got != nil {
+		t.Fatalf("popup key should be consumed, got %v", got)
 	}
 	if current := app.queue.GetCurrentItem(); current != 0 {
 		t.Fatalf("queue moved behind popup to %d", current)
+	}
+
+	app.queue.SetRect(0, 0, 20, 5)
+	event, _ := app.handleMouseCapture(tcell.NewEventMouse(1, 2, tcell.ButtonNone, tcell.ModNone), tview.MouseScrollDown)
+	if event != nil {
+		t.Fatalf("popup mouse should be consumed, got %v", event)
+	}
+	if current := app.queue.GetCurrentItem(); current != 0 {
+		t.Fatalf("queue moved behind popup mouse to %d", current)
 	}
 
 	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); got != nil {
@@ -462,8 +504,47 @@ func TestSystemPopupBlocksGlobalNavigationAndEscapeCloses(t *testing.T) {
 	if app.pages.HasPage(systemEditPageName) {
 		t.Fatal("popup page still exists after escape")
 	}
-	if app.app.GetFocus() != view.settingsList {
-		t.Fatalf("focus after popup close = %T, want settings list", app.app.GetFocus())
+	if app.app.GetFocus() != view {
+		t.Fatalf("focus after popup close = %T, want settings view", app.app.GetFocus())
+	}
+}
+
+func TestSystemTextPopupUsesContentAnchorAndMultilineEditor(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		},
+	}
+	view := newSettingsView(app, app.cfg)
+	app.pages.AddPage("main", view, true, true)
+
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(120, 32)
+	view.SetRect(0, 0, 80, 28)
+	view.Draw(screen)
+	view.openEndpointPopup()
+
+	popup, ok := app.systemPopup.(*systemTextPopup)
+	if !ok {
+		t.Fatalf("system popup = %T, want text popup", app.systemPopup)
+	}
+	popup.SetRect(0, 0, 120, 32)
+	popup.Draw(screen)
+
+	if popup.popupRect.x < view.contentRect.x ||
+		popup.popupRect.y < view.contentRect.y ||
+		popup.popupRect.x+popup.popupRect.width > view.contentRect.x+view.contentRect.width ||
+		popup.popupRect.y+popup.popupRect.height > view.contentRect.y+view.contentRect.height {
+		t.Fatalf("popup rect %+v should stay inside content %+v", popup.popupRect, view.contentRect)
+	}
+	if popup.textRect.height <= 1 {
+		t.Fatalf("text popup height = %d, want multiline editor", popup.textRect.height)
 	}
 }
 

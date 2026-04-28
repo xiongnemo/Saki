@@ -71,3 +71,26 @@ func TestLoadWithStopsPreviousBackendBeforeSwitching(t *testing.T) {
 		t.Fatal("expected next backend to become active")
 	}
 }
+
+func TestActiveBackendReportsConcreteBackend(t *testing.T) {
+	backend := &SwitchingBackend{
+		miniaudio: NewMiniAudioBackend(),
+		mpv:       NewMPVBackend(models.Settings{}),
+	}
+
+	if got := backend.ActiveBackend(); got != "none" {
+		t.Fatalf("inactive backend = %q, want none", got)
+	}
+	backend.active = backend.miniaudio
+	if got := backend.ActiveBackend(); got != "miniaudio" {
+		t.Fatalf("miniaudio backend = %q", got)
+	}
+	backend.active = backend.mpv
+	if got := backend.ActiveBackend(); got != "mpv" {
+		t.Fatalf("mpv backend = %q", got)
+	}
+	backend.active = newFakeSwitchBackend()
+	if got := backend.ActiveBackend(); got != "custom" {
+		t.Fatalf("custom backend = %q", got)
+	}
+}

@@ -78,6 +78,7 @@ type App struct {
 	lastClickList     *tview.List
 	lastClickIndex    int
 	lastClickAt       time.Time
+	systemPopup       tview.Primitive
 	systemPopupCancel func()
 
 	historyMu sync.Mutex
@@ -248,7 +249,14 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 			a.closeSystemEditPopup()
 			return nil
 		default:
-			return event
+			if a.systemPopup != nil {
+				if handler := a.systemPopup.InputHandler(); handler != nil {
+					handler(event, func(p tview.Primitive) {
+						a.app.SetFocus(p)
+					})
+				}
+			}
+			return nil
 		}
 	}
 
@@ -414,7 +422,14 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	if a.hasSystemEditPopup() {
-		return event, action
+		if a.systemPopup != nil {
+			if handler := a.systemPopup.MouseHandler(); handler != nil {
+				_, _ = handler(action, event, func(p tview.Primitive) {
+					a.app.SetFocus(p)
+				})
+			}
+		}
+		return nil, action
 	}
 	list := a.listAt(event.Position())
 	if list != nil {
@@ -467,6 +482,7 @@ func (a *App) closeSystemEditPopup() {
 	if a.pages != nil {
 		a.pages.RemovePage(systemEditPageName)
 	}
+	a.systemPopup = nil
 	a.focusContent()
 }
 
@@ -985,7 +1001,7 @@ func (a *App) showSettings(push bool) {
 	}
 
 	view := newSettingsView(a, a.cfg)
-	a.setContentWithFocus("System", view, view.settingsList)
+	a.setContentWithFocus("System", view, view)
 	a.contentOwnsTab = true
 	view.startProbeNow("")
 }

@@ -131,6 +131,34 @@ func TestCoverPreviewDrawsPlaceholderForMissingCover(t *testing.T) {
 	}
 }
 
+func TestCoverPreviewActiveRendererLabelReportsFallback(t *testing.T) {
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(16, 8)
+
+	view := newCoverPreviewWithRenderer(coverRendererSixel)
+	if got := view.ActiveRendererLabel(); got != "Sixel" {
+		t.Fatalf("pending renderer label = %q, want Sixel", got)
+	}
+	view.SetRect(0, 0, 16, 8)
+	view.SetState(models.CurrentState{CurrentTrack: &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title"}})
+	view.Draw(screen)
+	if got := view.ActiveRendererLabel(); got != "Cell" {
+		t.Fatalf("fallback renderer label = %q, want Cell", got)
+	}
+
+	view = newCoverPreviewWithRenderer(coverRendererOff)
+	view.SetRect(0, 0, 16, 8)
+	view.SetState(models.CurrentState{CurrentTrack: &models.Song{ID: "song"}})
+	view.Draw(screen)
+	if got := view.ActiveRendererLabel(); got != "Off" {
+		t.Fatalf("off renderer label = %q, want Off", got)
+	}
+}
+
 func TestWriteInlineCoverProtocols(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -172,6 +200,9 @@ func TestDrawInlineLocksRegionAndCachesWrite(t *testing.T) {
 	}
 	if !strings.Contains(tty.buf.String(), "\x1b_G") {
 		t.Fatal("expected kitty image output")
+	}
+	if got := view.ActiveRendererLabel(); got != "Kitty" {
+		t.Fatalf("active inline renderer = %q, want Kitty", got)
 	}
 
 	firstLen := tty.buf.Len()
