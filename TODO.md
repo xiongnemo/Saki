@@ -153,3 +153,15 @@ Status: completed.
 - [x] Draw About as intro plus Resolved Config and Media Support panels with aligned labels.
 - [x] Expose active audio backend and actual cover renderer status.
 - [x] Verify with focused UI/audio tests and `go test ./...`, then commit.
+
+## System About Host/Media Layout and Search Filter Activation
+
+Status: completed.
+
+- [x] Make System edit popup Esc close work even when the popup page owns focus.
+- [x] Move OS/Arch into the About intro with hostname when available.
+- [x] Move Active backend into Resolved Config and remove Configured backend.
+- [x] Render Media Support as label plus one wrapped value per line to avoid clipping long values.
+- [x] Fix `/` search filter arrow-key navigation while the filter input is focused.
+- [x] Make filter Enter trigger the selected original entry action instead of only jumping to it.
+- [x] Verify with focused UI tests and `go test ./...`, then commit.

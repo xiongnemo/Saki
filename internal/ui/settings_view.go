@@ -722,7 +722,11 @@ func (p *systemTextPopup) HasFocus() bool {
 
 func (p *systemTextPopup) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
 	return p.WrapInputHandler(func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
-		if event.Key() == tcell.KeyCtrlS {
+		switch event.Key() {
+		case tcell.KeyEscape:
+			p.cancelAndClose()
+			return
+		case tcell.KeyCtrlS:
 			p.save()
 			return
 		}
@@ -1125,8 +1129,17 @@ func (v *settingsView) aboutText() string {
 }
 
 func (v *settingsView) aboutIntroLines() []string {
+	host, err := os.Hostname()
+	osArch := osArchLabel()
+	if err == nil && strings.TrimSpace(host) != "" {
+		return []string{
+			fmt.Sprintf("This is Saki %s (Subsonic Audio Klient for Individuals), running on %s (%s).", version.String(), strings.TrimSpace(host), osArch),
+			"Made with ♪&♥ by Nemo Xiong.",
+			"Repository: https://github.com/xiongnemo/Saki",
+		}
+	}
 	return []string{
-		fmt.Sprintf("This is Saki %s (Subsonic Audio Klient for Individuals).", version.String()),
+		fmt.Sprintf("This is Saki %s (Subsonic Audio Klient for Individuals), running on %s.", version.String(), osArch),
 		"Made with ♪&♥ by Nemo Xiong.",
 		"Repository: https://github.com/xiongnemo/Saki",
 	}
@@ -1150,13 +1163,12 @@ func (v *settingsView) resolvedConfigRows() []kvRow {
 		{label: "Username", value: fallbackText(v.cfg.Account.Username, "Not configured")},
 		{label: "Active endpoint", value: activeEndpoint},
 		{label: "Endpoints", value: fmt.Sprintf("%d enabled / %d total", len(enabledEndpoints(v.cfg.Account.Endpoints)), len(v.cfg.Account.Endpoints))},
-		{label: "Configured backend", value: fallbackText(v.cfg.Settings.AudioBackend, "auto")},
+		{label: "Active backend", value: v.activeAudioBackend()},
 		{label: "MPV path", value: fallbackText(v.cfg.Settings.MPVPath, "PATH lookup")},
 		{label: "Bundled mpv", value: onOffOptions[boolOption(v.cfg.Settings.UseBundledMPV)]},
 		{label: "Cache dir", value: resolvedAudioCacheDir(v.cfg.Settings)},
 		{label: "Audio cache limit", value: formatBytes(v.cfg.Settings.AudioCacheMaxBytes)},
 		{label: "Health interval", value: fmt.Sprintf("%ds", v.cfg.Settings.HealthCheckIntervalSeconds)},
-		{label: "OS/Arch", value: runtime.GOOS + "/" + runtime.GOARCH},
 	}
 }
 
@@ -1167,10 +1179,9 @@ func (v *settingsView) mediaSupportRows() []kvRow {
 	}
 	return []kvRow{
 		{label: "Supported backends", value: "auto, miniaudio, mpv"},
-		{label: "Active backend", value: v.activeAudioBackend()},
 		{label: "Configured decoders", value: "MP3, WAV PCM/float, FLAC, ALAC/M4A"},
 		{label: "Streaming support", value: "HTTP Range, local proxy cache, mpv fallback"},
-		{label: "Audio output", value: "miniaudio default device, signed 16-bit PCM"},
+		{label: "Audio output", value: "Default device; signed 16-bit PCM"},
 		{label: "Supported cover renderers", value: supportedCoverRenderersLabel()},
 		{label: "Active cover renderer", value: activeCover},
 	}
@@ -1224,7 +1235,7 @@ func (v *settingsView) drawAbout(screen tcell.Screen) {
 		left := settingsRect{x: rect.x, y: y, width: leftWidth, height: availableHeight}
 		right := settingsRect{x: rect.x + leftWidth + gap, y: y, width: rightWidth, height: availableHeight}
 		drawKVPanel(screen, left, "Resolved Config", v.resolvedConfigRows())
-		drawKVPanel(screen, right, "Media Support", v.mediaSupportRows())
+		drawKVPanelStacked(screen, right, "Media Support", v.mediaSupportRows())
 		return
 	}
 	topHeight := availableHeight / 2
@@ -1235,7 +1246,7 @@ func (v *settingsView) drawAbout(screen tcell.Screen) {
 	bottomY := y + topHeight + 1
 	bottomHeight := rect.y + rect.height - bottomY
 	if bottomHeight > 0 {
-		drawKVPanel(screen, settingsRect{x: rect.x, y: bottomY, width: rect.width, height: bottomHeight}, "Media Support", v.mediaSupportRows())
+		drawKVPanelStacked(screen, settingsRect{x: rect.x, y: bottomY, width: rect.width, height: bottomHeight}, "Media Support", v.mediaSupportRows())
 	}
 }
 
@@ -1282,6 +1293,66 @@ func drawKVPanel(screen tcell.Screen, rect settingsRect, title string, rows []kv
 	}
 }
 
+func drawKVPanelStacked(screen tcell.Screen, rect settingsRect, title string, rows []kvRow) {
+	if rect.width <= 0 || rect.height <= 0 {
+		return
+	}
+	box := tview.NewBox().SetBorder(true).SetBorderColor(uiBorder).SetTitleColor(uiTitle).SetBackgroundColor(uiBackground)
+	setPlainTitle(box, title)
+	box.SetRect(rect.x, rect.y, rect.width, rect.height)
+	box.Draw(screen)
+
+	innerX := rect.x + 1
+	y := rect.y + 1
+	innerWidth := rect.width - 2
+	bottom := rect.y + rect.height - 1
+	if innerWidth <= 0 {
+		return
+	}
+	for _, row := range rows {
+		if y >= bottom {
+			break
+		}
+		drawStyledText(screen, innerX, y, innerWidth, row.label, tcell.StyleDefault.Foreground(uiLabel).Background(uiBackground))
+		y++
+		for _, line := range wrapRunes(row.value, innerWidth-2) {
+			if y >= bottom {
+				break
+			}
+			drawStyledText(screen, innerX+2, y, innerWidth-2, line, tcell.StyleDefault.Foreground(uiText).Background(uiBackground))
+			y++
+		}
+	}
+}
+
+func wrapRunes(text string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	current := ""
+	for _, word := range words {
+		if current == "" {
+			current = word
+			continue
+		}
+		if len([]rune(current))+1+len([]rune(word)) <= width {
+			current += " " + word
+			continue
+		}
+		lines = append(lines, current)
+		current = word
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
 func kvLabelWidth(rows []kvRow, maxWidth int) int {
 	width := 0
 	for _, row := range rows {
@@ -1294,6 +1365,10 @@ func kvLabelWidth(rows []kvRow, maxWidth int) int {
 		return maxWidth
 	}
 	return width
+}
+
+func osArchLabel() string {
+	return runtime.GOOS + "/" + runtime.GOARCH
 }
 
 func resolvedAudioCacheDir(settings models.Settings) string {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -399,12 +400,12 @@ func TestSystemAboutIncludesProperties(t *testing.T) {
 
 	view.setActiveTab(systemTabAbout, func(p tview.Primitive) { app.app.SetFocus(p) })
 	about := view.aboutText()
-	for _, want := range []string{"This is Saki", "Subsonic Audio Klient for Individuals", "♪&♥", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Resolved Config", "Media Support", "Config path", "Username", "Configured backend", "OS/Arch", "Configured decoders", "Audio output"} {
+	for _, want := range []string{"This is Saki", "Subsonic Audio Klient for Individuals", "running on", runtime.GOOS + "/" + runtime.GOARCH, "♪&♥", "Nemo Xiong", "https://github.com/xiongnemo/Saki", "https://music.example", "Resolved Config", "Media Support", "Config path", "Username", "Active backend", "Configured decoders", "Audio output"} {
 		if !strings.Contains(about, want) {
 			t.Fatalf("about text missing %q: %q", want, about)
 		}
 	}
-	for _, unwanted := range []string{"Connected endpoint:", "Current track", "Audio input", "No track loaded"} {
+	for _, unwanted := range []string{"Connected endpoint:", "Current track", "Audio input", "No track loaded", "Configured backend"} {
 		if strings.Contains(about, unwanted) {
 			t.Fatalf("about text contains removed field %q: %q", unwanted, about)
 		}
@@ -506,6 +507,34 @@ func TestSystemPopupBlocksGlobalNavigationAndEscapeCloses(t *testing.T) {
 	}
 	if app.app.GetFocus() != view {
 		t.Fatalf("focus after popup close = %T, want settings view", app.app.GetFocus())
+	}
+}
+
+func TestSystemTextPopupEscapeClosesItself(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		cfg: models.Config{
+			Account: models.Account{Endpoints: []models.Endpoint{{URL: "https://music.example", Enabled: true}}},
+		},
+	}
+	view := newSettingsView(app, app.cfg)
+	app.pages.AddPage("main", view, true, true)
+	view.openEndpointPopup()
+
+	handler := app.systemPopup.InputHandler()
+	if handler == nil {
+		t.Fatal("expected popup input handler")
+	}
+	handler(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone), func(p tview.Primitive) {
+		app.app.SetFocus(p)
+	})
+
+	if app.pages.HasPage(systemEditPageName) {
+		t.Fatal("popup page still exists after direct escape")
+	}
+	if app.app.GetFocus() != view {
+		t.Fatalf("focus after direct popup escape = %T, want settings view", app.app.GetFocus())
 	}
 }
 
@@ -804,12 +833,13 @@ func TestRenderStateUpdatesCoverPreview(t *testing.T) {
 	}
 }
 
-func TestFilterableListFiltersAndConfirmsOriginalItem(t *testing.T) {
+func TestFilterableListFiltersAndActivatesOriginalItem(t *testing.T) {
 	app := &App{app: tview.NewApplication()}
 	list := app.newFilterableList(appFocusContent)
-	list.AddItem("Alpha", "", 0, nil)
-	list.AddItem("Beta", "", 0, nil)
-	list.AddItem("Gamma", "", 0, nil)
+	called := -1
+	list.AddItem("Alpha", "", 0, func() { called = list.GetCurrentItem() })
+	list.AddItem("Beta", "", 0, func() { called = list.GetCurrentItem() })
+	list.AddItem("Gamma", "", 0, func() { called = list.GetCurrentItem() })
 	list.SetCurrentItem(2)
 
 	handler := list.list.InputHandler()
@@ -829,6 +859,32 @@ func TestFilterableListFiltersAndConfirmsOriginalItem(t *testing.T) {
 	}
 	if got := list.GetCurrentItem(); got != 1 {
 		t.Fatalf("confirmed original item = %d, want 1", got)
+	}
+	if called != 1 {
+		t.Fatalf("selected action called with %d, want original index 1", called)
+	}
+}
+
+func TestFilterableListInputArrowsMoveFilteredSelection(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	list := app.newFilterableList(appFocusContent)
+	list.AddItem("Alpha", "", 0, nil)
+	list.AddItem("Beta", "", 0, nil)
+	list.AddItem("Gamma", "", 0, nil)
+	list.SetCurrentItem(0)
+
+	handler := list.list.InputHandler()
+	handler(tcell.NewEventKey(tcell.KeyRune, '/', tcell.ModNone), nil)
+	list.input.SetText("a")
+
+	inputHandler := list.input.InputHandler()
+	inputHandler(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), nil)
+	if got := list.list.GetCurrentItem(); got != 1 {
+		t.Fatalf("filtered down current item = %d, want 1", got)
+	}
+	inputHandler(tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone), nil)
+	if got := list.list.GetCurrentItem(); got != 0 {
+		t.Fatalf("filtered up current item = %d, want 0", got)
 	}
 }
 

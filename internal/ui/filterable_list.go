@@ -43,6 +43,17 @@ func (a *App) newFilterableList(target appFocusTarget) *filterableList {
 		input: input,
 		list:  list,
 	}
+	input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if !view.filtering {
+			return event
+		}
+		switch event.Key() {
+		case tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn:
+			view.handleFilteredListKey(event)
+			return nil
+		}
+		return event
+	})
 	view.Flex.AddItem(input, 0, 0, false)
 	view.Flex.AddItem(list, 0, 1, true)
 
@@ -120,6 +131,9 @@ func (f *filterableList) confirmFilter() {
 	f.render("")
 	setListCurrentItem(f.list, original)
 	f.app.app.SetFocus(f.list)
+	if original >= 0 && original < len(f.entries) && f.entries[original].selected != nil {
+		f.entries[original].selected()
+	}
 }
 
 func (f *filterableList) cancelFilter() {
@@ -137,6 +151,15 @@ func (f *filterableList) stopFilter() {
 	f.filtering = false
 	f.input.SetText("")
 	f.ResizeItem(f.input, 0, 0)
+}
+
+func (f *filterableList) handleFilteredListKey(event *tcell.EventKey) {
+	if f.list == nil || f.list.GetItemCount() == 0 {
+		return
+	}
+	if handler := f.list.InputHandler(); handler != nil {
+		handler(event, func(p tview.Primitive) {})
+	}
 }
 
 func (f *filterableList) originalCurrentItem() int {
