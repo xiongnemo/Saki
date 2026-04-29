@@ -54,6 +54,20 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 
 ![1777344343416](image/README/1777344343416.png)
 
+### Now Playing
+
+#### Landscape Mode
+
+![1777444805470](image/README/1777444805470.png)
+
+#### Vertical Mode
+
+![1777444711641](image/README/1777444711641.png)
+
+#### Prompting when terminal shape is unusable 
+
+![1777444840213](image/README/1777444840213.png)
+
 ## Run
 
 ```pwsh
