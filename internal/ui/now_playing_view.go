@@ -225,7 +225,7 @@ func (v *nowPlayingView) drawSideCover(screen tcell.Screen, x, y, width, height 
 	status := nowPlayingStreamAudioLine(v.state, width)
 	v.lastStatus = status
 	v.statusRect = settingsRect{x: infoX, y: y + height - 2, width: infoWidth, height: 1}
-	tview.Print(screen, status, v.statusRect.x, v.statusRect.y, v.statusRect.width, tview.AlignLeft, uiMuted)
+	tview.Print(screen, status, v.statusRect.x, v.statusRect.y, v.statusRect.width, tview.AlignCenter, uiMuted)
 }
 
 func (v *nowPlayingView) drawTopCover(screen tcell.Screen, x, y, width, height int) {

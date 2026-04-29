@@ -954,6 +954,12 @@ func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	if side.statusRect.x < side.infoRect.x || side.statusRect.x+side.statusRect.width > side.infoRect.x+side.infoRect.width {
 		t.Fatalf("side status should stay inside right info area: status=%+v info=%+v", side.statusRect, side.infoRect)
 	}
+	sideStatusRow := screenRowText(sideScreen, side.statusRect.y, 120)
+	statusX := runeIndex(sideStatusRow, side.lastStatus)
+	wantStatusX := side.statusRect.x + max(0, (side.statusRect.width-len(side.lastStatus))/2)
+	if statusX != wantStatusX {
+		t.Fatalf("side status x = %d, want centered at %d: row=%q", statusX, wantStatusX, sideStatusRow)
+	}
 	if !strings.Contains(strings.Join(side.lastRows, "\n"), "Title: Title") {
 		t.Fatalf("side rows missing track title: %q", side.lastRows)
 	}
@@ -1526,6 +1532,27 @@ func nowPlayingButtonByAction(buttons []nowPlayingButton, action nowPlayingActio
 		}
 	}
 	return nowPlayingButton{}
+}
+
+func runeIndex(text, needle string) int {
+	if needle == "" {
+		return 0
+	}
+	textRunes := []rune(text)
+	needleRunes := []rune(needle)
+	for i := 0; i+len(needleRunes) <= len(textRunes); i++ {
+		matched := true
+		for j, needleRune := range needleRunes {
+			if textRunes[i+j] != needleRune {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return i
+		}
+	}
+	return -1
 }
 
 func screenRowText(screen tcell.SimulationScreen, row, width int) string {

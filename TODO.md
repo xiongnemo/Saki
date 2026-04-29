@@ -213,3 +213,10 @@ Status: completed.
 - [x] Preserve Now Playing overlay mouse move/down/up events through the global capture layer so `tview` can synthesize click actions.
 - [x] Keep actual playback actions bound to button click hitboxes.
 - [x] Add regression coverage for the overlay capture sequence and run `go test ./...`.
+
+## Now Playing Side Status Alignment
+
+Status: completed.
+
+- [x] Center the side-cover Now Playing stream/cache/audio status inside the right info area.
+- [x] Add focused UI coverage for the centered status placement and run `go test ./...`.
