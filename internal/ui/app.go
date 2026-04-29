@@ -515,6 +515,9 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	if a.hasNowPlayingOverlay() {
+		if preservesMouseClickSynthesis(action) {
+			return event, action
+		}
 		if a.playing != nil {
 			if handler := a.playing.MouseHandler(); handler != nil {
 				_, _ = handler(action, event, func(p tview.Primitive) {
@@ -559,6 +562,15 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	return event, action
+}
+
+func preservesMouseClickSynthesis(action tview.MouseAction) bool {
+	switch action {
+	case tview.MouseMove, tview.MouseLeftDown, tview.MouseLeftUp:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *App) hasSystemEditPopup() bool {

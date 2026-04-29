@@ -1084,6 +1084,51 @@ func TestNowPlayingButtonsReflectStateAndClick(t *testing.T) {
 	}
 }
 
+func TestNowPlayingMouseCapturePreservesClickSynthesis(t *testing.T) {
+	view := newNowPlayingView()
+	view.SetState(models.CurrentState{
+		CurrentTrack: &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180},
+		Playing:      true,
+	})
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(160, 28)
+	view.SetRect(0, 0, 160, 28)
+
+	var clicked nowPlayingAction = -1
+	view.onAction = func(action nowPlayingAction) { clicked = action }
+	view.Draw(screen)
+	playButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionPlayPause)
+	if playButton.rect.width == 0 {
+		t.Fatal("play/pause button rect was not recorded")
+	}
+	event := tcell.NewEventMouse(playButton.rect.x+1, playButton.rect.y, tcell.ButtonNone, tcell.ModNone)
+	app := &App{
+		app:     tview.NewApplication(),
+		pages:   tview.NewPages(),
+		playing: view,
+	}
+	app.pages.AddPage(nowPlayingPageName, view, true, true)
+
+	for _, action := range []tview.MouseAction{tview.MouseMove, tview.MouseLeftDown, tview.MouseLeftUp} {
+		nextEvent, _ := app.handleMouseCapture(event, action)
+		if nextEvent == nil {
+			t.Fatalf("%v should pass through so tview can synthesize MouseLeftClick", action)
+		}
+	}
+
+	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftClick)
+	if nextEvent != nil {
+		t.Fatal("MouseLeftClick should be consumed by Now Playing overlay")
+	}
+	if clicked != nowPlayingActionPlayPause {
+		t.Fatalf("clicked action = %v, want play/pause", clicked)
+	}
+}
+
 func TestNowPlayingButtonsUseCompactStateLabelsWhenNarrow(t *testing.T) {
 	topRow, bottomRow := nowPlayingButtonRowsForWidth(models.CurrentState{
 		Playing:      false,

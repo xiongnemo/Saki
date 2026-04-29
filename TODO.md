@@ -205,3 +205,11 @@ Status: completed.
 - [x] Lay out Prev, Play/Pause, and Next as a centered first row, with Repeat and Shuffle as a centered second row.
 - [x] Keep Repeat and Shuffle labels stateful while using compact labels only when width requires it.
 - [x] Verify button rows, hitboxes, and state labels with focused UI tests and `go test ./...`.
+
+## Now Playing Mouse Click Fix
+
+Status: completed.
+
+- [x] Preserve Now Playing overlay mouse move/down/up events through the global capture layer so `tview` can synthesize click actions.
+- [x] Keep actual playback actions bound to button click hitboxes.
+- [x] Add regression coverage for the overlay capture sequence and run `go test ./...`.
