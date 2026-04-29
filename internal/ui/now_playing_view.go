@@ -12,7 +12,6 @@ import (
 const (
 	nowPlayingWideMinWidth  = 72
 	nowPlayingWideMinHeight = 14
-	nowPlayingQueueRadius   = 2
 )
 
 type nowPlayingView struct {
@@ -22,15 +21,11 @@ type nowPlayingView struct {
 	cover      *coverPreview
 	coverRect  settingsRect
 	infoRect   settingsRect
-	queueRect  settingsRect
 	stacked    bool
 	lastRows   []string
 	lastStatus string
-}
 
-type queueContextRow struct {
-	text  string
-	color tcell.Color
+	onKey func(*tcell.EventKey) *tcell.EventKey
 }
 
 func newNowPlayingView() *nowPlayingView {
@@ -50,12 +45,19 @@ func (v *nowPlayingView) SetState(state models.CurrentState) {
 	}
 }
 
+func (v *nowPlayingView) InputHandler() func(*tcell.EventKey, func(tview.Primitive)) {
+	return v.WrapInputHandler(func(event *tcell.EventKey, _ func(tview.Primitive)) {
+		if v.onKey != nil {
+			v.onKey(event)
+		}
+	})
+}
+
 func (v *nowPlayingView) Draw(screen tcell.Screen) {
 	v.Box.DrawForSubclass(screen, v)
 	x, y, width, height := v.GetInnerRect()
 	v.coverRect = settingsRect{}
 	v.infoRect = settingsRect{}
-	v.queueRect = settingsRect{}
 	v.lastRows = nil
 	v.lastStatus = ""
 	if width <= 0 || height <= 0 {
@@ -105,13 +107,13 @@ func (v *nowPlayingView) drawWide(screen tcell.Screen, x, y, width, height int) 
 	v.coverRect = settingsRect{x: x, y: y, width: coverWidth, height: height}
 	v.infoRect = settingsRect{x: infoX, y: y, width: infoWidth, height: height}
 	v.drawCover(screen, v.coverRect)
-	v.drawInfo(screen, v.infoRect, true)
+	v.drawInfo(screen, v.infoRect)
 }
 
 func (v *nowPlayingView) drawStacked(screen tcell.Screen, x, y, width, height int) {
 	infoHeight := min(height, 9)
 	v.infoRect = settingsRect{x: x, y: y, width: width, height: infoHeight}
-	v.drawInfo(screen, v.infoRect, false)
+	v.drawInfo(screen, v.infoRect)
 	if height <= infoHeight+3 {
 		return
 	}
@@ -122,12 +124,6 @@ func (v *nowPlayingView) drawStacked(screen tcell.Screen, x, y, width, height in
 	if coverHeight >= 5 {
 		v.coverRect = settingsRect{x: x, y: remainingY, width: width, height: coverHeight}
 		v.drawCover(screen, v.coverRect)
-		remainingY += coverHeight + 1
-		remainingHeight = y + height - remainingY
-	}
-	if remainingHeight > 0 {
-		v.queueRect = settingsRect{x: x, y: remainingY, width: width, height: remainingHeight}
-		v.drawQueueContext(screen, v.queueRect)
 	}
 }
 
@@ -139,7 +135,7 @@ func (v *nowPlayingView) drawCover(screen tcell.Screen, rect settingsRect) {
 	v.cover.Draw(screen)
 }
 
-func (v *nowPlayingView) drawInfo(screen tcell.Screen, rect settingsRect, includeQueue bool) {
+func (v *nowPlayingView) drawInfo(screen tcell.Screen, rect settingsRect) {
 	if rect.width <= 0 || rect.height <= 0 || v.state.CurrentTrack == nil {
 		return
 	}
@@ -176,12 +172,6 @@ func (v *nowPlayingView) drawInfo(screen tcell.Screen, rect settingsRect, includ
 		tview.Print(screen, "Error: "+v.state.LastError, rect.x, row, rect.width, tview.AlignLeft, uiDanger)
 		row++
 	}
-	if !includeQueue || row >= endY-1 {
-		return
-	}
-	row++
-	v.queueRect = settingsRect{x: rect.x, y: row, width: rect.width, height: endY - row}
-	v.drawQueueContext(screen, v.queueRect)
 }
 
 func (v *nowPlayingView) printLabelValue(screen tcell.Screen, x, y, width int, label, value string, valueColor tcell.Color) int {
@@ -198,22 +188,6 @@ func (v *nowPlayingView) printLabelValue(screen tcell.Screen, x, y, width int, l
 	}, width)
 	v.lastRows = append(v.lastRows, prefix+value)
 	return y + 1
-}
-
-func (v *nowPlayingView) drawQueueContext(screen tcell.Screen, rect settingsRect) {
-	if rect.width <= 0 || rect.height <= 0 {
-		return
-	}
-	rows := queueContextRows(v.state, rect.height-1)
-	tview.Print(screen, "Queue Context", rect.x, rect.y, rect.width, tview.AlignLeft, uiTitle)
-	for i, row := range rows {
-		y := rect.y + 1 + i
-		if y >= rect.y+rect.height {
-			return
-		}
-		tview.Print(screen, row.text, rect.x, y, rect.width, tview.AlignLeft, row.color)
-		v.lastRows = append(v.lastRows, row.text)
-	}
 }
 
 func nowPlayingStatusLine(state models.CurrentState, width int) string {
@@ -244,51 +218,4 @@ func nowPlayingSeekLine(width int) string {
 		return "Seek: C-Left/C-Right | Volume: C-i/k | Esc Back"
 	}
 	return line
-}
-
-func queueContextRows(state models.CurrentState, maxRows int) []queueContextRow {
-	if maxRows <= 0 {
-		return nil
-	}
-	entries := state.CurrentPlaylist.Entries
-	if len(entries) == 0 {
-		return []queueContextRow{{text: "Queue is empty", color: uiMuted}}
-	}
-	index := state.CurrentTrackIndex
-	if index < 0 || index >= len(entries) {
-		index = 0
-	}
-	start := max(0, index-nowPlayingQueueRadius)
-	end := min(len(entries), index+nowPlayingQueueRadius+1)
-	for end-start > maxRows {
-		if index-start > end-index-1 {
-			start++
-		} else {
-			end--
-		}
-	}
-
-	rows := make([]queueContextRow, 0, end-start)
-	for i := start; i < end; i++ {
-		song := entries[i]
-		prefix := "  "
-		color := uiText
-		if i == index {
-			prefix = "> "
-			color = uiAccent
-		}
-		rows = append(rows, queueContextRow{
-			text:  fmt.Sprintf("%s%02d. %s - %s [%s]", prefix, i+1, nowPlayingFallbackText(song.Artist), nowPlayingFallbackText(song.Title), models.SecondsAsMMSS(song.Duration)),
-			color: color,
-		})
-	}
-	return rows
-}
-
-func nowPlayingFallbackText(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "Unknown"
-	}
-	return value
 }

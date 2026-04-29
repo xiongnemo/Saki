@@ -38,6 +38,7 @@ var (
 
 const (
 	playingPanelHeight       = 5
+	nowPlayingPageName       = "now-playing"
 	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
 	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
@@ -72,17 +73,18 @@ type App struct {
 
 	currentState models.CurrentState
 
-	focusTarget       appFocusTarget
-	contentFocus      tview.Primitive
-	contentTabHandler func(back bool) bool
-	contentReturn     func(back bool) bool
-	contentOwnsTab    bool
-	contentMouseLists []*tview.List
-	lastClickList     *tview.List
-	lastClickIndex    int
-	lastClickAt       time.Time
-	systemPopup       tview.Primitive
-	systemPopupCancel func()
+	focusTarget        appFocusTarget
+	contentFocus       tview.Primitive
+	contentTabHandler  func(back bool) bool
+	contentReturn      func(back bool) bool
+	contentOwnsTab     bool
+	contentMouseLists  []*tview.List
+	playingReturnFocus tview.Primitive
+	lastClickList      *tview.List
+	lastClickIndex     int
+	lastClickAt        time.Time
+	systemPopup        tview.Primitive
+	systemPopupCancel  func()
 
 	historyMu sync.Mutex
 	history   []func()
@@ -263,6 +265,13 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		}
 	}
 
+	if a.hasNowPlayingOverlay() {
+		if a.handleNowPlayingKey(event) {
+			return nil
+		}
+		return nil
+	}
+
 	textInputFocused := acceptsTextInput(a.app.GetFocus())
 	switch event.Key() {
 	case tcell.KeyCtrlQ:
@@ -359,6 +368,57 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 	return event
 }
 
+func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
+	if event == nil {
+		return true
+	}
+	switch event.Key() {
+	case tcell.KeyCtrlQ:
+		a.stop()
+	case tcell.KeyEscape, tcell.KeyBackspace, tcell.KeyBackspace2:
+		a.closeNowPlaying()
+	case tcell.KeyCtrlO:
+		a.closeNowPlaying()
+	case tcell.KeyCtrlN:
+		if a.player != nil {
+			a.player.Next()
+		}
+	case tcell.KeyCtrlB:
+		if a.player != nil {
+			a.player.Previous()
+		}
+	case tcell.KeyCtrlT:
+		if a.player != nil {
+			a.player.ToggleRepeat()
+		}
+	case tcell.KeyCtrlH:
+		if a.player != nil {
+			a.player.Shuffle()
+		}
+	case tcell.KeyCtrlI:
+		if a.player != nil {
+			a.player.SetVolume(5, true)
+		}
+	case tcell.KeyCtrlK:
+		if a.player != nil {
+			a.player.SetVolume(-5, true)
+		}
+	case tcell.KeyRight:
+		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
+			a.player.Seek(10, true)
+		}
+	case tcell.KeyLeft:
+		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
+			a.player.Seek(-10, true)
+		}
+	case tcell.KeyRune:
+		if event.Rune() == ' ' && a.player != nil {
+			a.player.PlayPause()
+		}
+	}
+	return true
+}
+
 func (a *App) handleQueueKey(event *tcell.EventKey) bool {
 	if a.queue == nil || a.focusTarget != appFocusQueue {
 		return false
@@ -435,6 +495,9 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 				})
 			}
 		}
+		return nil, action
+	}
+	if a.hasNowPlayingOverlay() {
 		return nil, action
 	}
 	list := a.listAt(event.Position())
@@ -981,17 +1044,46 @@ func (a *App) renderSearchResults(query string, result models.SearchResult, focu
 }
 
 func (a *App) showNowPlaying(push bool) {
-	if push {
-		a.pushHistory(func() { a.showNowPlaying(false) })
-	}
 	view := newNowPlayingView()
+	view.onKey = a.handleGlobalKey
 	state := a.currentState
 	if state.CurrentTrack == nil && a.player != nil {
 		state = a.player.State()
 	}
 	view.SetState(state)
 	a.playing = view
-	a.setContentWithFocus("Now Playing", view, view)
+	if a.app != nil {
+		a.playingReturnFocus = a.app.GetFocus()
+	}
+	if a.pages != nil {
+		a.pages.AddPage(nowPlayingPageName, view, true, true)
+	}
+	if a.app != nil {
+		a.app.SetFocus(view)
+	}
+	_ = push
+}
+
+func (a *App) hasNowPlayingOverlay() bool {
+	return a.pages != nil && a.pages.HasPage(nowPlayingPageName)
+}
+
+func (a *App) closeNowPlaying() {
+	if a.pages != nil {
+		a.pages.RemovePage(nowPlayingPageName)
+	}
+	a.playing = nil
+	if a.app == nil {
+		return
+	}
+	if a.playingReturnFocus != nil {
+		a.app.SetFocus(a.playingReturnFocus)
+		a.playingReturnFocus = nil
+		return
+	}
+	if a.content != nil {
+		a.focusContent()
+	}
 }
 
 func searchMouseLists(targets []searchFocusTarget) []*tview.List {

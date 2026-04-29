@@ -166,11 +166,12 @@ Status: completed.
 - [x] Make filter Enter trigger the selected original entry action instead of only jumping to it.
 - [x] Verify with focused UI tests and `go test ./...`, then commit.
 
-## Now Playing Control Page
+## Fullscreen Now Playing Overlay
 
 Status: completed.
 
-- [x] Add a dedicated Now Playing content page with large cover art, track metadata, progress, playback controls, stream/cache/audio status, and queue context.
-- [x] Add a global shortcut to open Now Playing while keeping existing playback shortcuts unchanged.
+- [x] Add a fullscreen Now Playing overlay with large cover art, track metadata, progress, playback controls, and stream/cache/audio status.
+- [x] Add a global shortcut to open and close Now Playing while keeping existing playback shortcuts unchanged.
 - [x] Keep the existing bottom Playing panel as the compact global status surface.
-- [x] Verify responsive rendering and navigation with focused UI tests and `go test ./...`.
+- [x] Keep the fullscreen overlay playback-focused by omitting queue context.
+- [x] Verify responsive rendering, overlay close/return behavior, and navigation with focused UI tests and `go test ./...`.

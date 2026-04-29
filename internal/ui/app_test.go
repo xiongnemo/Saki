@@ -835,9 +835,10 @@ func TestRenderStateUpdatesCoverPreview(t *testing.T) {
 
 func TestNowPlayingShortcutShowsPage(t *testing.T) {
 	track := &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180}
+	previousFocus := tview.NewTextView()
 	app := &App{
-		app:     tview.NewApplication(),
-		content: tview.NewPages(),
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
 		currentState: models.CurrentState{
 			CurrentTrack:      track,
 			CurrentTrackIndex: 0,
@@ -845,20 +846,34 @@ func TestNowPlayingShortcutShowsPage(t *testing.T) {
 			Volume:            0.75,
 		},
 	}
+	app.app.SetFocus(previousFocus)
 
 	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyCtrlO, 0, tcell.ModNone)); got != nil {
 		t.Fatalf("Ctrl+O should be handled, got %v", got)
 	}
-	_, item := app.content.GetFrontPage()
+	name, item := app.pages.GetFrontPage()
+	if name != nowPlayingPageName {
+		t.Fatalf("front page = %q, want %q", name, nowPlayingPageName)
+	}
 	view, ok := item.(*nowPlayingView)
 	if !ok {
-		t.Fatalf("content page = %T, want nowPlayingView", item)
+		t.Fatalf("overlay page = %T, want nowPlayingView", item)
 	}
-	if app.contentFocus != view || app.playing != view {
-		t.Fatalf("now playing focus/view not installed: focus=%T playing=%T", app.contentFocus, app.playing)
+	if app.app.GetFocus() != view || app.playing != view {
+		t.Fatalf("now playing focus/view not installed: focus=%T playing=%T", app.app.GetFocus(), app.playing)
 	}
 	if view.state.CurrentTrack == nil || view.state.CurrentTrack.Title != "Title" {
 		t.Fatalf("now playing track = %+v, want Title", view.state.CurrentTrack)
+	}
+
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)); got != nil {
+		t.Fatalf("escape should be handled, got %v", got)
+	}
+	if app.pages.HasPage(nowPlayingPageName) {
+		t.Fatal("now playing overlay should close on escape")
+	}
+	if app.app.GetFocus() != previousFocus {
+		t.Fatalf("focus after close = %T, want previous focus", app.app.GetFocus())
 	}
 }
 
@@ -914,11 +929,14 @@ func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	if wide.stacked {
 		t.Fatal("wide layout should not stack")
 	}
-	if wide.coverRect.width == 0 || wide.queueRect.height == 0 {
-		t.Fatalf("wide layout missing cover/queue: cover=%+v queue=%+v", wide.coverRect, wide.queueRect)
+	if wide.coverRect.width == 0 || wide.infoRect.width == 0 {
+		t.Fatalf("wide layout missing cover/info: cover=%+v info=%+v", wide.coverRect, wide.infoRect)
 	}
 	if !strings.Contains(strings.Join(wide.lastRows, "\n"), "Title: Title") {
 		t.Fatalf("wide rows missing track title: %q", wide.lastRows)
+	}
+	if strings.Contains(strings.Join(wide.lastRows, "\n"), "Queue Context") {
+		t.Fatalf("now playing rows should not include queue context: %q", wide.lastRows)
 	}
 
 	narrow := newNowPlayingView()
@@ -939,21 +957,22 @@ func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	}
 }
 
-func TestQueueContextRowsCenterCurrentTrack(t *testing.T) {
-	state := models.CurrentState{
-		CurrentPlaylist: models.Playlist{Entries: []models.Song{
-			{Artist: "A", Title: "one", Duration: 1},
-			{Artist: "A", Title: "two", Duration: 2},
-			{Artist: "A", Title: "three", Duration: 3},
-		}},
-		CurrentTrackIndex: 1,
+func TestNowPlayingInputHandlerRoutesGlobalKeys(t *testing.T) {
+	app := &App{
+		app:     tview.NewApplication(),
+		pages:   tview.NewPages(),
+		playing: newNowPlayingView(),
 	}
-	rows := queueContextRows(state, 3)
-	if len(rows) != 3 {
-		t.Fatalf("queue context rows = %d, want 3", len(rows))
+	app.playing.onKey = app.handleGlobalKey
+	app.pages.AddPage(nowPlayingPageName, app.playing, true, true)
+	handler := app.playing.InputHandler()
+	if handler == nil {
+		t.Fatal("expected now playing input handler")
 	}
-	if !strings.HasPrefix(rows[1].text, "> 02.") || !strings.Contains(rows[1].text, "two") {
-		t.Fatalf("current row = %q, want highlighted second track", rows[1].text)
+
+	handler(tcell.NewEventKey(tcell.KeyBackspace, 0, tcell.ModNone), func(tview.Primitive) {})
+	if app.pages.HasPage(nowPlayingPageName) {
+		t.Fatal("now playing overlay should close on backspace")
 	}
 }
 
