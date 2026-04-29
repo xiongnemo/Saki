@@ -196,3 +196,12 @@ Status: completed.
 - [x] Render playback controls as bordered clickable button blocks in both Now Playing layouts.
 - [x] Expand top-cover Now Playing cover art to use the available width and keep buttons below progress.
 - [x] Verify controls resize behavior, side/top layout placement, cover width, and button clicks with focused UI tests and `go test ./...`.
+
+## Now Playing Button Redesign
+
+Status: completed.
+
+- [x] Replace the bordered ASCII-style Now Playing controls with filled button labels matching the Settings Save button style.
+- [x] Lay out Prev, Play/Pause, and Next as a centered first row, with Repeat and Shuffle as a centered second row.
+- [x] Keep Repeat and Shuffle labels stateful while using compact labels only when width requires it.
+- [x] Verify button rows, hitboxes, and state labels with focused UI tests and `go test ./...`.

@@ -1060,23 +1060,45 @@ func TestNowPlayingButtonsReflectStateAndClick(t *testing.T) {
 			t.Fatalf("button rows missing %q: %q", want, rows)
 		}
 	}
-	var playButton nowPlayingButton
-	for _, button := range view.buttons {
-		if button.action == nowPlayingActionPlayPause {
-			playButton = button
-			break
-		}
-	}
+	prevButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionPrevious)
+	playButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionPlayPause)
+	nextButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionNext)
+	repeatButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionRepeat)
+	shuffleButton := nowPlayingButtonByAction(view.buttons, nowPlayingActionShuffle)
 	if playButton.rect.width == 0 {
 		t.Fatal("play/pause button rect was not recorded")
 	}
-	if playButton.rect.height != nowPlayingButtonHeight {
-		t.Fatalf("play/pause button height = %d, want button block height", playButton.rect.height)
+	if prevButton.rect.y != playButton.rect.y || playButton.rect.y != nextButton.rect.y {
+		t.Fatalf("transport buttons should share first row: prev=%+v play=%+v next=%+v", prevButton.rect, playButton.rect, nextButton.rect)
+	}
+	if repeatButton.rect.y != shuffleButton.rect.y || repeatButton.rect.y <= playButton.rect.y {
+		t.Fatalf("mode buttons should share second row below transport row: repeat=%+v shuffle=%+v play=%+v", repeatButton.rect, shuffleButton.rect, playButton.rect)
+	}
+	if repeatButton.rect.x <= view.infoRect.x || shuffleButton.rect.x+shuffleButton.rect.width >= view.infoRect.x+view.infoRect.width {
+		t.Fatalf("mode buttons should be centered inside info width: repeat=%+v shuffle=%+v info=%+v", repeatButton.rect, shuffleButton.rect, view.infoRect)
 	}
 	handler := view.MouseHandler()
-	handler(tview.MouseLeftClick, tcell.NewEventMouse(playButton.rect.x+1, playButton.rect.y+1, tcell.ButtonNone, tcell.ModNone), func(tview.Primitive) {})
+	handler(tview.MouseLeftClick, tcell.NewEventMouse(playButton.rect.x+1, playButton.rect.y, tcell.ButtonNone, tcell.ModNone), func(tview.Primitive) {})
 	if clicked != nowPlayingActionPlayPause {
 		t.Fatalf("clicked action = %v, want play/pause", clicked)
+	}
+}
+
+func TestNowPlayingButtonsUseCompactStateLabelsWhenNarrow(t *testing.T) {
+	topRow, bottomRow := nowPlayingButtonRowsForWidth(models.CurrentState{
+		Playing:      false,
+		RepeatStatus: models.RepeatOne,
+		Shuffled:     false,
+	}, 24)
+
+	if got := buttonRowWidth(topRow); got > 24 {
+		t.Fatalf("top row width = %d, want it to fit", got)
+	}
+	if got := buttonRowWidth(bottomRow); got > 24 {
+		t.Fatalf("bottom row width = %d, want it to fit", got)
+	}
+	if bottomRow[0].label != "Rep:One" || bottomRow[1].label != "Shuf:Off" {
+		t.Fatalf("compact labels = %q/%q, want stateful compact labels", bottomRow[0].label, bottomRow[1].label)
 	}
 }
 
@@ -1450,6 +1472,15 @@ func selectedCellStyle(t *testing.T, list *tview.List, focused bool) tcell.Style
 	list.Draw(screen)
 	_, _, style, _ := screen.GetContent(0, 0)
 	return style
+}
+
+func nowPlayingButtonByAction(buttons []nowPlayingButton, action nowPlayingAction) nowPlayingButton {
+	for _, button := range buttons {
+		if button.action == action {
+			return button
+		}
+	}
+	return nowPlayingButton{}
 }
 
 func screenRowText(screen tcell.SimulationScreen, row, width int) string {

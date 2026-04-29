@@ -14,7 +14,9 @@ const (
 	nowPlayingSideMinHeight = 20
 	nowPlayingTopMinWidth   = 54
 	nowPlayingTopMinHeight  = 26
-	nowPlayingButtonHeight  = 3
+	nowPlayingButtonHeight  = 1
+	nowPlayingButtonGap     = 2
+	nowPlayingButtonRows    = 3
 )
 
 type nowPlayingLayout int
@@ -286,34 +288,33 @@ func (v *nowPlayingView) drawTextBlock(screen tcell.Screen, rect settingsRect, a
 		v.lastRows = append(v.lastRows, progress)
 		row += 2
 	}
-	if row+nowPlayingButtonHeight <= endY {
+	if row+nowPlayingButtonRows <= endY {
 		v.drawButtons(screen, rect.x, row, rect.width, align)
-		row += nowPlayingButtonHeight + 1
+		row += nowPlayingButtonRows + 1
 	}
 	if v.state.LastError != "" && row < endY {
 		tview.Print(screen, "Error: "+v.state.LastError, rect.x, row, rect.width, align, uiDanger)
 	}
 }
 
-func (v *nowPlayingView) drawButtons(screen tcell.Screen, x, y, width, align int) {
-	buttons := nowPlayingButtons(v.state, width)
-	totalWidth := 0
-	for i, button := range buttons {
-		if i > 0 {
-			totalWidth += 2
-		}
-		totalWidth += len(button.label) + 4
-	}
+func (v *nowPlayingView) drawButtons(screen tcell.Screen, x, y, width, _ int) {
+	topRow, bottomRow := nowPlayingButtonRowsForWidth(v.state, width)
+	v.drawButtonRow(screen, x, y, width, topRow)
+	v.drawButtonRow(screen, x, y+2, width, bottomRow)
+}
+
+func (v *nowPlayingView) drawButtonRow(screen tcell.Screen, x, y, width int, buttons []nowPlayingButton) {
+	totalWidth := buttonRowWidth(buttons)
 	startX := x
-	if align == tview.AlignCenter && totalWidth < width {
+	if totalWidth < width {
 		startX = x + (width-totalWidth)/2
 	}
 	cursor := startX
 	for i, button := range buttons {
 		if i > 0 {
-			cursor += 2
+			cursor += nowPlayingButtonGap
 		}
-		buttonWidth := len(button.label) + 4
+		buttonWidth := nowPlayingButtonWidth(button.label)
 		button.rect = settingsRect{x: cursor, y: y, width: buttonWidth, height: nowPlayingButtonHeight}
 		color := uiTitle
 		if button.action == nowPlayingActionRepeat || button.action == nowPlayingActionShuffle {
@@ -326,26 +327,24 @@ func (v *nowPlayingView) drawButtons(screen tcell.Screen, x, y, width, align int
 	}
 }
 
-func nowPlayingButtons(state models.CurrentState, width int) []nowPlayingButton {
+func nowPlayingButtonRowsForWidth(state models.CurrentState, width int) ([]nowPlayingButton, []nowPlayingButton) {
 	playLabel := "Play"
 	if state.Playing {
 		playLabel = "Pause"
 	}
-	buttons := []nowPlayingButton{
+	topRow := []nowPlayingButton{
 		{label: "Prev", action: nowPlayingActionPrevious},
 		{label: playLabel, action: nowPlayingActionPlayPause},
 		{label: "Next", action: nowPlayingActionNext},
+	}
+	bottomRow := []nowPlayingButton{
 		{label: "Repeat: " + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
 		{label: "Shuffle: " + boolText(state.Shuffled), action: nowPlayingActionShuffle},
 	}
-	total := buttonRowWidth(buttons)
-	if total <= width {
-		return buttons
+	if buttonRowWidth(topRow) <= width && buttonRowWidth(bottomRow) <= width {
+		return topRow, bottomRow
 	}
-	return []nowPlayingButton{
-		{label: "Prev", action: nowPlayingActionPrevious},
-		{label: playLabel, action: nowPlayingActionPlayPause},
-		{label: "Next", action: nowPlayingActionNext},
+	return topRow, []nowPlayingButton{
 		{label: "Rep:" + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
 		{label: "Shuf:" + boolText(state.Shuffled), action: nowPlayingActionShuffle},
 	}
@@ -355,34 +354,24 @@ func buttonRowWidth(buttons []nowPlayingButton) int {
 	width := 0
 	for i, button := range buttons {
 		if i > 0 {
-			width += 2
+			width += nowPlayingButtonGap
 		}
-		width += len(button.label) + 4
+		width += nowPlayingButtonWidth(button.label)
 	}
 	return width
+}
+
+func nowPlayingButtonWidth(label string) int {
+	return len([]rune(label)) + 2
 }
 
 func drawNowPlayingButton(screen tcell.Screen, rect settingsRect, label string, color tcell.Color) {
 	if screen == nil || rect.width <= 0 || rect.height <= 0 {
 		return
 	}
-	borderStyle := tcell.StyleDefault.Foreground(color).Background(uiBackground)
-	textStyle := tcell.StyleDefault.Foreground(uiText).Background(uiField).Bold(true)
-	for col := 0; col < rect.width; col++ {
-		screen.SetContent(rect.x+col, rect.y, '-', nil, borderStyle)
-		screen.SetContent(rect.x+col, rect.y+rect.height-1, '-', nil, borderStyle)
-	}
-	for row := 0; row < rect.height; row++ {
-		screen.SetContent(rect.x, rect.y+row, '|', nil, borderStyle)
-		screen.SetContent(rect.x+rect.width-1, rect.y+row, '|', nil, borderStyle)
-	}
-	screen.SetContent(rect.x, rect.y, '+', nil, borderStyle)
-	screen.SetContent(rect.x+rect.width-1, rect.y, '+', nil, borderStyle)
-	screen.SetContent(rect.x, rect.y+rect.height-1, '+', nil, borderStyle)
-	screen.SetContent(rect.x+rect.width-1, rect.y+rect.height-1, '+', nil, borderStyle)
-	textX := rect.x + max(1, (rect.width-len([]rune(label)))/2)
-	textY := rect.y + rect.height/2
-	printStyled(screen, label, textX, textY, max(0, rect.width-2), tview.AlignLeft, textStyle)
+	style := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(color)
+	text := " " + label + " "
+	drawPlainText(screen, rect.x, rect.y, text, style)
 }
 
 func metadataLine(track *models.Song) string {
