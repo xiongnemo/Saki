@@ -220,3 +220,11 @@ Status: completed.
 
 - [x] Center the side-cover Now Playing stream/cache/audio status inside the right info area.
 - [x] Add focused UI coverage for the centered status placement and run `go test ./...`.
+
+## Now Playing Top Cover Aspect
+
+Status: completed.
+
+- [x] Size the vertical/top-cover Now Playing cover from the image aspect ratio before filling extra width.
+- [x] Keep enough rows for title, metadata, progress, two-row buttons, and status.
+- [x] Add focused UI coverage for square and wide cover aspect behavior and run `go test ./...`.

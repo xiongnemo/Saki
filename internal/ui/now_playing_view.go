@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -229,11 +230,7 @@ func (v *nowPlayingView) drawSideCover(screen tcell.Screen, x, y, width, height 
 }
 
 func (v *nowPlayingView) drawTopCover(screen tcell.Screen, x, y, width, height int) {
-	coverHeight := min(max(10, height/2), height-13)
-	coverWidth := width - 8
-	if coverWidth < 1 {
-		coverWidth = width
-	}
+	coverWidth, coverHeight := topCoverSize(width-8, height-13, v.coverImageRatio())
 	coverX := x + (width-coverWidth)/2
 	v.coverRect = settingsRect{x: coverX, y: y + 1, width: coverWidth, height: coverHeight}
 	v.drawCover(screen, v.coverRect)
@@ -249,6 +246,39 @@ func (v *nowPlayingView) drawTopCover(screen tcell.Screen, x, y, width, height i
 	v.lastStatus = status
 	v.statusRect = settingsRect{x: x, y: y + height - 1, width: width, height: 1}
 	tview.Print(screen, status, v.statusRect.x, v.statusRect.y, v.statusRect.width, tview.AlignCenter, uiMuted)
+}
+
+func (v *nowPlayingView) coverImageRatio() float64 {
+	if v == nil || v.cover == nil {
+		return 1
+	}
+	img := v.cover.currentImage()
+	if img == nil || img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
+		return 1
+	}
+	return float64(img.Bounds().Dx()) / float64(img.Bounds().Dy())
+}
+
+func topCoverSize(maxWidth, maxHeight int, imageRatio float64) (int, int) {
+	if maxWidth <= 0 {
+		maxWidth = 1
+	}
+	if maxHeight <= 0 {
+		maxHeight = 1
+	}
+	if imageRatio <= 0 {
+		imageRatio = 1
+	}
+	targetCellRatio := imageRatio / defaultCoverCellRatio
+	if targetCellRatio <= 0 {
+		targetCellRatio = 1 / defaultCoverCellRatio
+	}
+	widthFromHeight := int(math.Round(float64(maxHeight) * targetCellRatio))
+	if widthFromHeight <= maxWidth {
+		return max(1, widthFromHeight), maxHeight
+	}
+	heightFromWidth := int(math.Round(float64(maxWidth) / targetCellRatio))
+	return maxWidth, max(1, min(maxHeight, heightFromWidth))
 }
 
 func (v *nowPlayingView) drawCover(screen tcell.Screen, rect settingsRect) {

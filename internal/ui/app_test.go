@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"image"
 	"runtime"
 	"strings"
 	"testing"
@@ -1153,24 +1154,26 @@ func TestNowPlayingButtonsUseCompactStateLabelsWhenNarrow(t *testing.T) {
 	}
 }
 
-func TestNowPlayingTopCoverUsesAvailableWidth(t *testing.T) {
+func TestNowPlayingTopCoverPreservesAspectRatio(t *testing.T) {
 	state := models.CurrentState{
 		CurrentTrack: &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180},
 		Playing:      true,
 	}
-	narrow := newNowPlayingView()
-	narrow.SetState(state)
-	narrowScreen := tcell.NewSimulationScreen("")
-	if err := narrowScreen.Init(); err != nil {
+	square := newNowPlayingView()
+	square.SetState(state)
+	square.cover.image = image.NewRGBA(image.Rect(0, 0, 100, 100))
+	squareScreen := tcell.NewSimulationScreen("")
+	if err := squareScreen.Init(); err != nil {
 		t.Fatal(err)
 	}
-	defer narrowScreen.Fini()
-	narrowScreen.SetSize(58, 32)
-	narrow.SetRect(0, 0, 58, 32)
-	narrow.Draw(narrowScreen)
+	defer squareScreen.Fini()
+	squareScreen.SetSize(82, 32)
+	square.SetRect(0, 0, 82, 32)
+	square.Draw(squareScreen)
 
 	wide := newNowPlayingView()
 	wide.SetState(state)
+	wide.cover.image = image.NewRGBA(image.Rect(0, 0, 160, 90))
 	wideScreen := tcell.NewSimulationScreen("")
 	if err := wideScreen.Init(); err != nil {
 		t.Fatal(err)
@@ -1180,14 +1183,17 @@ func TestNowPlayingTopCoverUsesAvailableWidth(t *testing.T) {
 	wide.SetRect(0, 0, 82, 32)
 	wide.Draw(wideScreen)
 
-	if narrow.layout != nowPlayingLayoutTopCover || wide.layout != nowPlayingLayoutTopCover {
-		t.Fatalf("expected top layouts, got narrow=%v wide=%v", narrow.layout, wide.layout)
+	if square.layout != nowPlayingLayoutTopCover || wide.layout != nowPlayingLayoutTopCover {
+		t.Fatalf("expected top layouts, got square=%v wide=%v", square.layout, wide.layout)
 	}
-	if wide.coverRect.width <= narrow.coverRect.width {
-		t.Fatalf("top cover width should grow with terminal width: narrow=%+v wide=%+v", narrow.coverRect, wide.coverRect)
+	if square.coverRect.width != square.coverRect.height*2 {
+		t.Fatalf("square top cover should preserve cell aspect: %+v", square.coverRect)
 	}
-	if wide.coverRect.width < 70 {
-		t.Fatalf("wide top cover should use most available width: %+v", wide.coverRect)
+	if wide.coverRect.width <= square.coverRect.width {
+		t.Fatalf("wide cover should be wider than square cover in the same box: square=%+v wide=%+v", square.coverRect, wide.coverRect)
+	}
+	if wide.coverRect.height != square.coverRect.height {
+		t.Fatalf("wide cover should still use available cover height: square=%+v wide=%+v", square.coverRect, wide.coverRect)
 	}
 }
 
