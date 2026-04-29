@@ -37,8 +37,11 @@ var (
 )
 
 const (
-	playingPanelHeight = 5
-	nowPlayingPageName = "now-playing"
+	playingPanelHeight       = 5
+	nowPlayingPageName       = "now-playing"
+	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
+	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
+	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
 type appFocusTarget int
@@ -66,6 +69,7 @@ type App struct {
 	cover   *coverPreview
 	status  *playingView
 	playing *nowPlayingView
+	help    *tview.TextView
 
 	currentState models.CurrentState
 
@@ -215,10 +219,12 @@ func (a *App) showMain() {
 	a.cover = newCoverPreview()
 
 	a.status = newPlayingView()
+	a.help = newControlsHelpView()
 
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.content, 0, 1, true).
-		AddItem(a.status, playingPanelHeight, 0, false)
+		AddItem(a.status, playingPanelHeight, 0, false).
+		AddItem(a.help, 4, 0, false)
 	right := a.queuePanel()
 
 	root := tview.NewFlex().
@@ -232,6 +238,17 @@ func (a *App) showMain() {
 
 func (a *App) queuePanel() tview.Primitive {
 	return newQueueSidePanel(a.queue, a.cover)
+}
+
+func newControlsHelpView() *tview.TextView {
+	help := tview.NewTextView().SetDynamicColors(true)
+	help.SetScrollable(false)
+	help.SetWrap(false)
+	help.SetWordWrap(false)
+	help.SetBorder(true)
+	setPlainTitle(help, "Controls")
+	help.SetText(controlsHelpText)
+	return help
 }
 
 func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
@@ -576,6 +593,9 @@ func (a *App) listAt(x, y int) *tview.List {
 
 func (a *App) passivePanelAt(x, y int) bool {
 	if a.status != nil && a.status.InRect(x, y) {
+		return true
+	}
+	if a.help != nil && a.help.InRect(x, y) {
 		return true
 	}
 	return false

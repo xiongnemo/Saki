@@ -71,6 +71,30 @@ func TestViewTitle(t *testing.T) {
 	}
 }
 
+func TestControlsHelpViewKeepsTwoLinesAfterResize(t *testing.T) {
+	help := newControlsHelpView()
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+
+	screen.SetSize(24, 4)
+	help.SetRect(0, 0, 24, 4)
+	help.Draw(screen)
+	if row := screenRowText(screen, 2, 24); !strings.Contains(row, "Space") {
+		t.Fatalf("narrow controls second line = %q, want playback shortcuts", row)
+	}
+
+	screen.Clear()
+	screen.SetSize(96, 4)
+	help.SetRect(0, 0, 96, 4)
+	help.Draw(screen)
+	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") {
+		t.Fatalf("wide controls second line = %q, want playback shortcuts after resize", row)
+	}
+}
+
 func TestApplyListFocusStyleDrawsFocusedAndUnfocused(t *testing.T) {
 	list := tview.NewList().ShowSecondaryText(false)
 	list.AddItem("alpha", "", 0, nil)
@@ -927,6 +951,9 @@ func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	if side.coverRect.width == 0 || side.infoRect.width == 0 {
 		t.Fatalf("side layout missing cover/info: cover=%+v info=%+v", side.coverRect, side.infoRect)
 	}
+	if side.statusRect.x < side.infoRect.x || side.statusRect.x+side.statusRect.width > side.infoRect.x+side.infoRect.width {
+		t.Fatalf("side status should stay inside right info area: status=%+v info=%+v", side.statusRect, side.infoRect)
+	}
 	if !strings.Contains(strings.Join(side.lastRows, "\n"), "Title: Title") {
 		t.Fatalf("side rows missing track title: %q", side.lastRows)
 	}
@@ -949,6 +976,12 @@ func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	}
 	if top.coverRect.y >= top.infoRect.y {
 		t.Fatalf("top cover should be above info: cover=%+v info=%+v", top.coverRect, top.infoRect)
+	}
+	if len(top.buttons) == 0 {
+		t.Fatal("top layout should draw clickable buttons below progress")
+	}
+	if top.statusRect.width <= top.infoRect.width {
+		t.Fatalf("top status should use full row width: %+v", top.statusRect)
 	}
 
 	hint := newNowPlayingView()
@@ -974,8 +1007,8 @@ func TestNowPlayingMetadataScrollsWhenTooWide(t *testing.T) {
 	view.SetState(models.CurrentState{
 		CurrentTrack: &models.Song{
 			ID:       "song",
-			Artist:   "A very very long artist name",
-			Album:    "A very very long album name",
+			Artist:   "A very very long artist name with several extra words",
+			Album:    "A very very long album name with several extra words",
 			Title:    "Title",
 			Duration: 180,
 		},
@@ -1022,7 +1055,7 @@ func TestNowPlayingButtonsReflectStateAndClick(t *testing.T) {
 	view.Draw(screen)
 
 	rows := strings.Join(view.lastRows, "\n")
-	for _, want := range []string{"[ Pause ]", "[ Repeat: All ]", "[ Shuffle: On ]"} {
+	for _, want := range []string{"Pause", "Repeat: All", "Shuffle: On"} {
 		if !strings.Contains(rows, want) {
 			t.Fatalf("button rows missing %q: %q", want, rows)
 		}
@@ -1037,10 +1070,51 @@ func TestNowPlayingButtonsReflectStateAndClick(t *testing.T) {
 	if playButton.rect.width == 0 {
 		t.Fatal("play/pause button rect was not recorded")
 	}
+	if playButton.rect.height != nowPlayingButtonHeight {
+		t.Fatalf("play/pause button height = %d, want button block height", playButton.rect.height)
+	}
 	handler := view.MouseHandler()
-	handler(tview.MouseLeftClick, tcell.NewEventMouse(playButton.rect.x, playButton.rect.y, tcell.ButtonNone, tcell.ModNone), func(tview.Primitive) {})
+	handler(tview.MouseLeftClick, tcell.NewEventMouse(playButton.rect.x+1, playButton.rect.y+1, tcell.ButtonNone, tcell.ModNone), func(tview.Primitive) {})
 	if clicked != nowPlayingActionPlayPause {
 		t.Fatalf("clicked action = %v, want play/pause", clicked)
+	}
+}
+
+func TestNowPlayingTopCoverUsesAvailableWidth(t *testing.T) {
+	state := models.CurrentState{
+		CurrentTrack: &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180},
+		Playing:      true,
+	}
+	narrow := newNowPlayingView()
+	narrow.SetState(state)
+	narrowScreen := tcell.NewSimulationScreen("")
+	if err := narrowScreen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer narrowScreen.Fini()
+	narrowScreen.SetSize(58, 32)
+	narrow.SetRect(0, 0, 58, 32)
+	narrow.Draw(narrowScreen)
+
+	wide := newNowPlayingView()
+	wide.SetState(state)
+	wideScreen := tcell.NewSimulationScreen("")
+	if err := wideScreen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer wideScreen.Fini()
+	wideScreen.SetSize(82, 32)
+	wide.SetRect(0, 0, 82, 32)
+	wide.Draw(wideScreen)
+
+	if narrow.layout != nowPlayingLayoutTopCover || wide.layout != nowPlayingLayoutTopCover {
+		t.Fatalf("expected top layouts, got narrow=%v wide=%v", narrow.layout, wide.layout)
+	}
+	if wide.coverRect.width <= narrow.coverRect.width {
+		t.Fatalf("top cover width should grow with terminal width: narrow=%+v wide=%+v", narrow.coverRect, wide.coverRect)
+	}
+	if wide.coverRect.width < 70 {
+		t.Fatalf("wide top cover should use most available width: %+v", wide.coverRect)
 	}
 }
 
@@ -1376,4 +1450,16 @@ func selectedCellStyle(t *testing.T, list *tview.List, focused bool) tcell.Style
 	list.Draw(screen)
 	_, _, style, _ := screen.GetContent(0, 0)
 	return style
+}
+
+func screenRowText(screen tcell.SimulationScreen, row, width int) string {
+	var b strings.Builder
+	for x := 0; x < width; x++ {
+		ch, _, _, _ := screen.GetContent(x, row)
+		if ch == 0 {
+			ch = ' '
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
 }

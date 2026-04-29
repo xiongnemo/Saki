@@ -180,9 +180,19 @@ Status: completed.
 
 Status: completed.
 
-- [x] Remove the main-screen Controls bar while preserving global keyboard shortcuts.
+- [x] Remove explanatory Controls text from the Now Playing overlay while preserving global keyboard shortcuts.
 - [x] Auto-select between side-cover and top-cover Now Playing layouts based on terminal shape.
 - [x] Show a clear terminal ratio hint when neither layout fits.
 - [x] Emphasize the title and render `Artist - Album` metadata with horizontal scrolling when needed.
 - [x] Add clickable Prev, Play/Pause, Next, Repeat, and Shuffle buttons with current state labels.
 - [x] Verify layout selection, metadata scrolling, mouse buttons, and existing shortcuts with focused UI tests and `go test ./...`.
+
+## Now Playing Polish Fix
+
+Status: completed.
+
+- [x] Restore the main-screen Controls bar and keep it to two non-wrapping rows through window resizes.
+- [x] Keep side-cover Now Playing layouts cover-only on the left and move text, buttons, and Stream/Audio status to the right info area.
+- [x] Render playback controls as bordered clickable button blocks in both Now Playing layouts.
+- [x] Expand top-cover Now Playing cover art to use the available width and keep buttons below progress.
+- [x] Verify controls resize behavior, side/top layout placement, cover width, and button clicks with focused UI tests and `go test ./...`.
