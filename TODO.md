@@ -175,3 +175,14 @@ Status: completed.
 - [x] Keep the existing bottom Playing panel as the compact global status surface.
 - [x] Keep the fullscreen overlay playback-focused by omitting queue context.
 - [x] Verify responsive rendering, overlay close/return behavior, and navigation with focused UI tests and `go test ./...`.
+
+## Now Playing Style Variants
+
+Status: completed.
+
+- [x] Remove the main-screen Controls bar while preserving global keyboard shortcuts.
+- [x] Auto-select between side-cover and top-cover Now Playing layouts based on terminal shape.
+- [x] Show a clear terminal ratio hint when neither layout fits.
+- [x] Emphasize the title and render `Artist - Album` metadata with horizontal scrolling when needed.
+- [x] Add clickable Prev, Play/Pause, Next, Repeat, and Shuffle buttons with current state labels.
+- [x] Verify layout selection, metadata scrolling, mouse buttons, and existing shortcuts with focused UI tests and `go test ./...`.

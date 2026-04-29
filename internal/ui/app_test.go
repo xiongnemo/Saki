@@ -903,57 +903,144 @@ func TestRenderStateUpdatesNowPlayingView(t *testing.T) {
 
 func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
 	state := models.CurrentState{
-		CurrentTrack: &models.Song{ID: "song-2", Artist: "Artist", Album: "Album", Title: "Title", Duration: 240},
-		Position:     42,
-		Playing:      true,
-		Volume:       0.65,
-		AudioInfo:    models.AudioInfo{Codec: "flac", BitDepth: 24, SampleRate: 48000},
-		CurrentPlaylist: models.Playlist{Entries: []models.Song{
-			{ID: "song-1", Artist: "Artist", Title: "Previous", Duration: 120},
-			{ID: "song-2", Artist: "Artist", Title: "Title", Duration: 240},
-			{ID: "song-3", Artist: "Artist", Title: "Next", Duration: 180},
-		}},
+		CurrentTrack:      &models.Song{ID: "song-2", Artist: "Artist", Album: "Album", Title: "Title", Duration: 240},
+		Position:          42,
+		Playing:           true,
+		Volume:            0.65,
+		AudioInfo:         models.AudioInfo{Codec: "flac", BitDepth: 24, SampleRate: 48000},
 		CurrentTrackIndex: 1,
 	}
 
-	wide := newNowPlayingView()
-	wide.SetState(state)
-	wideScreen := tcell.NewSimulationScreen("")
-	if err := wideScreen.Init(); err != nil {
+	side := newNowPlayingView()
+	side.SetState(state)
+	sideScreen := tcell.NewSimulationScreen("")
+	if err := sideScreen.Init(); err != nil {
 		t.Fatal(err)
 	}
-	defer wideScreen.Fini()
-	wideScreen.SetSize(100, 28)
-	wide.SetRect(0, 0, 100, 28)
-	wide.Draw(wideScreen)
-	if wide.stacked {
-		t.Fatal("wide layout should not stack")
+	defer sideScreen.Fini()
+	sideScreen.SetSize(120, 28)
+	side.SetRect(0, 0, 120, 28)
+	side.Draw(sideScreen)
+	if side.layout != nowPlayingLayoutSideCover {
+		t.Fatalf("wide layout = %v, want side cover", side.layout)
 	}
-	if wide.coverRect.width == 0 || wide.infoRect.width == 0 {
-		t.Fatalf("wide layout missing cover/info: cover=%+v info=%+v", wide.coverRect, wide.infoRect)
+	if side.coverRect.width == 0 || side.infoRect.width == 0 {
+		t.Fatalf("side layout missing cover/info: cover=%+v info=%+v", side.coverRect, side.infoRect)
 	}
-	if !strings.Contains(strings.Join(wide.lastRows, "\n"), "Title: Title") {
-		t.Fatalf("wide rows missing track title: %q", wide.lastRows)
+	if !strings.Contains(strings.Join(side.lastRows, "\n"), "Title: Title") {
+		t.Fatalf("side rows missing track title: %q", side.lastRows)
 	}
-	if strings.Contains(strings.Join(wide.lastRows, "\n"), "Queue Context") {
-		t.Fatalf("now playing rows should not include queue context: %q", wide.lastRows)
+	if strings.Contains(strings.Join(side.lastRows, "\n"), "Queue Context") {
+		t.Fatalf("now playing rows should not include queue context: %q", side.lastRows)
 	}
 
-	narrow := newNowPlayingView()
-	narrow.SetState(state)
-	narrowScreen := tcell.NewSimulationScreen("")
-	if err := narrowScreen.Init(); err != nil {
+	top := newNowPlayingView()
+	top.SetState(state)
+	topScreen := tcell.NewSimulationScreen("")
+	if err := topScreen.Init(); err != nil {
 		t.Fatal(err)
 	}
-	defer narrowScreen.Fini()
-	narrowScreen.SetSize(50, 20)
-	narrow.SetRect(0, 0, 50, 20)
-	narrow.Draw(narrowScreen)
-	if !narrow.stacked {
-		t.Fatal("narrow layout should stack")
+	defer topScreen.Fini()
+	topScreen.SetSize(70, 32)
+	top.SetRect(0, 0, 70, 32)
+	top.Draw(topScreen)
+	if top.layout != nowPlayingLayoutTopCover {
+		t.Fatalf("tall layout = %v, want top cover", top.layout)
 	}
-	if narrow.coverRect.y <= narrow.infoRect.y {
-		t.Fatalf("narrow cover should be below info: cover=%+v info=%+v", narrow.coverRect, narrow.infoRect)
+	if top.coverRect.y >= top.infoRect.y {
+		t.Fatalf("top cover should be above info: cover=%+v info=%+v", top.coverRect, top.infoRect)
+	}
+
+	hint := newNowPlayingView()
+	hint.SetState(state)
+	hintScreen := tcell.NewSimulationScreen("")
+	if err := hintScreen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer hintScreen.Fini()
+	hintScreen.SetSize(42, 14)
+	hint.SetRect(0, 0, 42, 14)
+	hint.Draw(hintScreen)
+	if hint.layout != nowPlayingLayoutHint {
+		t.Fatalf("small layout = %v, want hint", hint.layout)
+	}
+	if !strings.Contains(strings.Join(hint.lastRows, "\n"), "Try at least") {
+		t.Fatalf("hint rows missing ratio guidance: %q", hint.lastRows)
+	}
+}
+
+func TestNowPlayingMetadataScrollsWhenTooWide(t *testing.T) {
+	view := newNowPlayingView()
+	view.SetState(models.CurrentState{
+		CurrentTrack: &models.Song{
+			ID:       "song",
+			Artist:   "A very very long artist name",
+			Album:    "A very very long album name",
+			Title:    "Title",
+			Duration: 180,
+		},
+	})
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(70, 32)
+	view.SetRect(0, 0, 70, 32)
+	view.Draw(screen)
+	if view.metadataWidth <= 0 || len(view.metadataText) <= view.metadataWidth {
+		t.Fatalf("metadata should overflow: text=%q width=%d", view.metadataText, view.metadataWidth)
+	}
+	if !view.AdvanceMetadataScroll() || view.metadataOffset != 1 {
+		t.Fatalf("metadata offset = %d, want advanced scroll", view.metadataOffset)
+	}
+	if got := scrollingText("abcdef", 4, 2); got != "cdef" {
+		t.Fatalf("scrollingText = %q, want cdef", got)
+	}
+}
+
+func TestNowPlayingButtonsReflectStateAndClick(t *testing.T) {
+	view := newNowPlayingView()
+	view.SetState(models.CurrentState{
+		CurrentTrack:      &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180},
+		Playing:           true,
+		RepeatStatus:      models.RepeatAll,
+		Shuffled:          true,
+		CacheReady:        true,
+		AudioInfo:         models.AudioInfo{Codec: "flac", BitDepth: 24, SampleRate: 48000},
+		CurrentTrackIndex: 0,
+	})
+	screen := tcell.NewSimulationScreen("")
+	if err := screen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer screen.Fini()
+	screen.SetSize(160, 28)
+	view.SetRect(0, 0, 160, 28)
+	var clicked nowPlayingAction = -1
+	view.onAction = func(action nowPlayingAction) { clicked = action }
+	view.Draw(screen)
+
+	rows := strings.Join(view.lastRows, "\n")
+	for _, want := range []string{"[ Pause ]", "[ Repeat: All ]", "[ Shuffle: On ]"} {
+		if !strings.Contains(rows, want) {
+			t.Fatalf("button rows missing %q: %q", want, rows)
+		}
+	}
+	var playButton nowPlayingButton
+	for _, button := range view.buttons {
+		if button.action == nowPlayingActionPlayPause {
+			playButton = button
+			break
+		}
+	}
+	if playButton.rect.width == 0 {
+		t.Fatal("play/pause button rect was not recorded")
+	}
+	handler := view.MouseHandler()
+	handler(tview.MouseLeftClick, tcell.NewEventMouse(playButton.rect.x, playButton.rect.y, tcell.ButtonNone, tcell.ModNone), func(tview.Primitive) {})
+	if clicked != nowPlayingActionPlayPause {
+		t.Fatalf("clicked action = %v, want play/pause", clicked)
 	}
 }
 
@@ -1176,16 +1263,14 @@ func TestPassivePanelsDoNotTakeMouseFocus(t *testing.T) {
 	app := &App{
 		app:    tview.NewApplication(),
 		status: newPlayingView(),
-		help:   tview.NewTextView(),
 	}
 	app.status.SetRect(0, 5, 20, 3)
-	app.help.SetRect(0, 8, 20, 3)
 	app.app.SetFocus(initial)
 
-	event := tcell.NewEventMouse(1, 9, tcell.ButtonNone, tcell.ModNone)
+	event := tcell.NewEventMouse(1, 6, tcell.ButtonNone, tcell.ModNone)
 	nextEvent, _ := app.handleMouseCapture(event, tview.MouseLeftDown)
 	if nextEvent != nil {
-		t.Fatal("passive panel mouse down should be consumed")
+		t.Fatal("playing panel mouse down should be consumed")
 	}
 	if app.app.GetFocus() != initial {
 		t.Fatalf("focus = %T, want initial list", app.app.GetFocus())
@@ -1246,24 +1331,6 @@ func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
 	}
 	if got := playingLeftText(state, len("Stream Ready  Cached  ALAC")-1); got != "Stream Ready  Cached" {
 		t.Fatalf("narrow playing left text = %q", got)
-	}
-}
-
-func TestControlsHelpMentionsViewSearch(t *testing.T) {
-	if !strings.Contains(controlsHelpText, "/ Search View") {
-		t.Fatalf("controls help missing view search shortcut: %q", controlsHelpText)
-	}
-	if !strings.Contains(controlsViewHelpText, "C-o Playing") {
-		t.Fatalf("controls help missing now playing shortcut: %q", controlsViewHelpText)
-	}
-	if !strings.Contains(controlsHelpText, "\n") {
-		t.Fatalf("controls help should be split into two lines: %q", controlsHelpText)
-	}
-	if !strings.Contains(controlsViewHelpText, "C-a Artists") || strings.Contains(controlsViewHelpText, "Play/Pause") {
-		t.Fatalf("view controls line is not view-specific: %q", controlsViewHelpText)
-	}
-	if !strings.Contains(controlsPlaybackHelpText, "Play/Pause") || strings.Contains(controlsPlaybackHelpText, "Artists") {
-		t.Fatalf("playback controls line is not playback-specific: %q", controlsPlaybackHelpText)
 	}
 }
 

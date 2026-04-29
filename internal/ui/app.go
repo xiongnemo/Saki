@@ -37,11 +37,8 @@ var (
 )
 
 const (
-	playingPanelHeight       = 5
-	nowPlayingPageName       = "now-playing"
-	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
-	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
-	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
+	playingPanelHeight = 5
+	nowPlayingPageName = "now-playing"
 )
 
 type appFocusTarget int
@@ -69,7 +66,6 @@ type App struct {
 	cover   *coverPreview
 	status  *playingView
 	playing *nowPlayingView
-	help    *tview.TextView
 
 	currentState models.CurrentState
 
@@ -80,6 +76,7 @@ type App struct {
 	contentOwnsTab     bool
 	contentMouseLists  []*tview.List
 	playingReturnFocus tview.Primitive
+	playingTickerStop  context.CancelFunc
 	lastClickList      *tview.List
 	lastClickIndex     int
 	lastClickAt        time.Time
@@ -219,16 +216,9 @@ func (a *App) showMain() {
 
 	a.status = newPlayingView()
 
-	a.help = tview.NewTextView().SetDynamicColors(true)
-	a.help.SetScrollable(false)
-	a.help.SetBorder(true)
-	setPlainTitle(a.help, "Controls")
-	a.help.SetText(controlsHelpText)
-
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.content, 0, 1, true).
-		AddItem(a.status, playingPanelHeight, 0, false).
-		AddItem(a.help, 4, 0, false)
+		AddItem(a.status, playingPanelHeight, 0, false)
 	right := a.queuePanel()
 
 	root := tview.NewFlex().
@@ -380,21 +370,13 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 	case tcell.KeyCtrlO:
 		a.closeNowPlaying()
 	case tcell.KeyCtrlN:
-		if a.player != nil {
-			a.player.Next()
-		}
+		a.handleNowPlayingAction(nowPlayingActionNext)
 	case tcell.KeyCtrlB:
-		if a.player != nil {
-			a.player.Previous()
-		}
+		a.handleNowPlayingAction(nowPlayingActionPrevious)
 	case tcell.KeyCtrlT:
-		if a.player != nil {
-			a.player.ToggleRepeat()
-		}
+		a.handleNowPlayingAction(nowPlayingActionRepeat)
 	case tcell.KeyCtrlH:
-		if a.player != nil {
-			a.player.Shuffle()
-		}
+		a.handleNowPlayingAction(nowPlayingActionShuffle)
 	case tcell.KeyCtrlI:
 		if a.player != nil {
 			a.player.SetVolume(5, true)
@@ -412,11 +394,29 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 			a.player.Seek(-10, true)
 		}
 	case tcell.KeyRune:
-		if event.Rune() == ' ' && a.player != nil {
-			a.player.PlayPause()
+		if event.Rune() == ' ' {
+			a.handleNowPlayingAction(nowPlayingActionPlayPause)
 		}
 	}
 	return true
+}
+
+func (a *App) handleNowPlayingAction(action nowPlayingAction) {
+	if a.player == nil {
+		return
+	}
+	switch action {
+	case nowPlayingActionPrevious:
+		a.player.Previous()
+	case nowPlayingActionPlayPause:
+		a.player.PlayPause()
+	case nowPlayingActionNext:
+		a.player.Next()
+	case nowPlayingActionRepeat:
+		a.player.ToggleRepeat()
+	case nowPlayingActionShuffle:
+		a.player.Shuffle()
+	}
 }
 
 func (a *App) handleQueueKey(event *tcell.EventKey) bool {
@@ -498,6 +498,13 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 		return nil, action
 	}
 	if a.hasNowPlayingOverlay() {
+		if a.playing != nil {
+			if handler := a.playing.MouseHandler(); handler != nil {
+				_, _ = handler(action, event, func(p tview.Primitive) {
+					a.app.SetFocus(p)
+				})
+			}
+		}
 		return nil, action
 	}
 	list := a.listAt(event.Position())
@@ -569,9 +576,6 @@ func (a *App) listAt(x, y int) *tview.List {
 
 func (a *App) passivePanelAt(x, y int) bool {
 	if a.status != nil && a.status.InRect(x, y) {
-		return true
-	}
-	if a.help != nil && a.help.InRect(x, y) {
 		return true
 	}
 	return false
@@ -1046,6 +1050,7 @@ func (a *App) renderSearchResults(query string, result models.SearchResult, focu
 func (a *App) showNowPlaying(push bool) {
 	view := newNowPlayingView()
 	view.onKey = a.handleGlobalKey
+	view.onAction = a.handleNowPlayingAction
 	state := a.currentState
 	if state.CurrentTrack == nil && a.player != nil {
 		state = a.player.State()
@@ -1061,6 +1066,7 @@ func (a *App) showNowPlaying(push bool) {
 	if a.app != nil {
 		a.app.SetFocus(view)
 	}
+	a.startNowPlayingTicker(view)
 	_ = push
 }
 
@@ -1069,6 +1075,7 @@ func (a *App) hasNowPlayingOverlay() bool {
 }
 
 func (a *App) closeNowPlaying() {
+	a.stopNowPlayingTicker()
 	if a.pages != nil {
 		a.pages.RemovePage(nowPlayingPageName)
 	}
@@ -1083,6 +1090,38 @@ func (a *App) closeNowPlaying() {
 	}
 	if a.content != nil {
 		a.focusContent()
+	}
+}
+
+func (a *App) startNowPlayingTicker(view *nowPlayingView) {
+	a.stopNowPlayingTicker()
+	if a.ctx == nil || a.app == nil || view == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.playingTickerStop = cancel
+	go func() {
+		ticker := time.NewTicker(350 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				a.app.QueueUpdateDraw(func() {
+					if a.playing == view {
+						view.AdvanceMetadataScroll()
+					}
+				})
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (a *App) stopNowPlayingTicker() {
+	if a.playingTickerStop != nil {
+		a.playingTickerStop()
+		a.playingTickerStop = nil
 	}
 }
 
