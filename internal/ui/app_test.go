@@ -833,6 +833,130 @@ func TestRenderStateUpdatesCoverPreview(t *testing.T) {
 	}
 }
 
+func TestNowPlayingShortcutShowsPage(t *testing.T) {
+	track := &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "Title", Duration: 180}
+	app := &App{
+		app:     tview.NewApplication(),
+		content: tview.NewPages(),
+		currentState: models.CurrentState{
+			CurrentTrack:      track,
+			CurrentTrackIndex: 0,
+			CurrentPlaylist:   models.Playlist{Entries: []models.Song{*track}},
+			Volume:            0.75,
+		},
+	}
+
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyCtrlO, 0, tcell.ModNone)); got != nil {
+		t.Fatalf("Ctrl+O should be handled, got %v", got)
+	}
+	_, item := app.content.GetFrontPage()
+	view, ok := item.(*nowPlayingView)
+	if !ok {
+		t.Fatalf("content page = %T, want nowPlayingView", item)
+	}
+	if app.contentFocus != view || app.playing != view {
+		t.Fatalf("now playing focus/view not installed: focus=%T playing=%T", app.contentFocus, app.playing)
+	}
+	if view.state.CurrentTrack == nil || view.state.CurrentTrack.Title != "Title" {
+		t.Fatalf("now playing track = %+v, want Title", view.state.CurrentTrack)
+	}
+}
+
+func TestRenderStateUpdatesNowPlayingView(t *testing.T) {
+	app := &App{
+		app:     tview.NewApplication(),
+		queue:   tview.NewList(),
+		status:  newPlayingView(),
+		playing: newNowPlayingView(),
+	}
+	track := &models.Song{ID: "song", Artist: "Artist", Album: "Album", Title: "New Title", Duration: 60}
+
+	app.renderState(models.CurrentState{
+		CurrentTrack:      track,
+		CurrentTrackIndex: 0,
+		CurrentPlaylist:   models.Playlist{Entries: []models.Song{*track}},
+		Volume:            1,
+	})
+
+	if app.currentState.CurrentTrack != track {
+		t.Fatalf("app current state track = %p, want %p", app.currentState.CurrentTrack, track)
+	}
+	if app.playing.state.CurrentTrack != track {
+		t.Fatalf("now playing state track = %p, want %p", app.playing.state.CurrentTrack, track)
+	}
+}
+
+func TestNowPlayingViewResponsiveLayouts(t *testing.T) {
+	state := models.CurrentState{
+		CurrentTrack: &models.Song{ID: "song-2", Artist: "Artist", Album: "Album", Title: "Title", Duration: 240},
+		Position:     42,
+		Playing:      true,
+		Volume:       0.65,
+		AudioInfo:    models.AudioInfo{Codec: "flac", BitDepth: 24, SampleRate: 48000},
+		CurrentPlaylist: models.Playlist{Entries: []models.Song{
+			{ID: "song-1", Artist: "Artist", Title: "Previous", Duration: 120},
+			{ID: "song-2", Artist: "Artist", Title: "Title", Duration: 240},
+			{ID: "song-3", Artist: "Artist", Title: "Next", Duration: 180},
+		}},
+		CurrentTrackIndex: 1,
+	}
+
+	wide := newNowPlayingView()
+	wide.SetState(state)
+	wideScreen := tcell.NewSimulationScreen("")
+	if err := wideScreen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer wideScreen.Fini()
+	wideScreen.SetSize(100, 28)
+	wide.SetRect(0, 0, 100, 28)
+	wide.Draw(wideScreen)
+	if wide.stacked {
+		t.Fatal("wide layout should not stack")
+	}
+	if wide.coverRect.width == 0 || wide.queueRect.height == 0 {
+		t.Fatalf("wide layout missing cover/queue: cover=%+v queue=%+v", wide.coverRect, wide.queueRect)
+	}
+	if !strings.Contains(strings.Join(wide.lastRows, "\n"), "Title: Title") {
+		t.Fatalf("wide rows missing track title: %q", wide.lastRows)
+	}
+
+	narrow := newNowPlayingView()
+	narrow.SetState(state)
+	narrowScreen := tcell.NewSimulationScreen("")
+	if err := narrowScreen.Init(); err != nil {
+		t.Fatal(err)
+	}
+	defer narrowScreen.Fini()
+	narrowScreen.SetSize(50, 20)
+	narrow.SetRect(0, 0, 50, 20)
+	narrow.Draw(narrowScreen)
+	if !narrow.stacked {
+		t.Fatal("narrow layout should stack")
+	}
+	if narrow.coverRect.y <= narrow.infoRect.y {
+		t.Fatalf("narrow cover should be below info: cover=%+v info=%+v", narrow.coverRect, narrow.infoRect)
+	}
+}
+
+func TestQueueContextRowsCenterCurrentTrack(t *testing.T) {
+	state := models.CurrentState{
+		CurrentPlaylist: models.Playlist{Entries: []models.Song{
+			{Artist: "A", Title: "one", Duration: 1},
+			{Artist: "A", Title: "two", Duration: 2},
+			{Artist: "A", Title: "three", Duration: 3},
+		}},
+		CurrentTrackIndex: 1,
+	}
+	rows := queueContextRows(state, 3)
+	if len(rows) != 3 {
+		t.Fatalf("queue context rows = %d, want 3", len(rows))
+	}
+	if !strings.HasPrefix(rows[1].text, "> 02.") || !strings.Contains(rows[1].text, "two") {
+		t.Fatalf("current row = %q, want highlighted second track", rows[1].text)
+	}
+}
+
 func TestFilterableListFiltersAndActivatesOriginalItem(t *testing.T) {
 	app := &App{app: tview.NewApplication()}
 	list := app.newFilterableList(appFocusContent)
@@ -1109,6 +1233,9 @@ func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
 func TestControlsHelpMentionsViewSearch(t *testing.T) {
 	if !strings.Contains(controlsHelpText, "/ Search View") {
 		t.Fatalf("controls help missing view search shortcut: %q", controlsHelpText)
+	}
+	if !strings.Contains(controlsViewHelpText, "C-o Playing") {
+		t.Fatalf("controls help missing now playing shortcut: %q", controlsViewHelpText)
 	}
 	if !strings.Contains(controlsHelpText, "\n") {
 		t.Fatalf("controls help should be split into two lines: %q", controlsHelpText)

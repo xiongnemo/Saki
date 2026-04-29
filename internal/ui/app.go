@@ -38,7 +38,7 @@ var (
 
 const (
 	playingPanelHeight       = 5
-	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | / Search View | C-s System"
+	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
 	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
@@ -67,7 +67,10 @@ type App struct {
 	queue   *tview.List
 	cover   *coverPreview
 	status  *playingView
+	playing *nowPlayingView
 	help    *tview.TextView
+
+	currentState models.CurrentState
 
 	focusTarget       appFocusTarget
 	contentFocus      tview.Primitive
@@ -294,6 +297,9 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	case tcell.KeyCtrlR:
 		a.showSearch(true)
+		return nil
+	case tcell.KeyCtrlO:
+		a.showNowPlaying(true)
 		return nil
 	case tcell.KeyCtrlS:
 		a.showSettings(true)
@@ -974,6 +980,20 @@ func (a *App) renderSearchResults(query string, result models.SearchResult, focu
 	}
 }
 
+func (a *App) showNowPlaying(push bool) {
+	if push {
+		a.pushHistory(func() { a.showNowPlaying(false) })
+	}
+	view := newNowPlayingView()
+	state := a.currentState
+	if state.CurrentTrack == nil && a.player != nil {
+		state = a.player.State()
+	}
+	view.SetState(state)
+	a.playing = view
+	a.setContentWithFocus("Now Playing", view, view)
+}
+
 func searchMouseLists(targets []searchFocusTarget) []*tview.List {
 	lists := make([]*tview.List, 0, len(targets))
 	for _, target := range targets {
@@ -1018,6 +1038,10 @@ func (a *App) consumePlayerUpdates() {
 }
 
 func (a *App) renderState(state models.CurrentState) {
+	a.currentState = state
+	if a.playing != nil {
+		a.playing.SetState(state)
+	}
 	if a.status == nil || a.queue == nil {
 		return
 	}

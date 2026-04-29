@@ -165,3 +165,12 @@ Status: completed.
 - [x] Fix `/` search filter arrow-key navigation while the filter input is focused.
 - [x] Make filter Enter trigger the selected original entry action instead of only jumping to it.
 - [x] Verify with focused UI tests and `go test ./...`, then commit.
+
+## Now Playing Control Page
+
+Status: completed.
+
+- [x] Add a dedicated Now Playing content page with large cover art, track metadata, progress, playback controls, stream/cache/audio status, and queue context.
+- [x] Add a global shortcut to open Now Playing while keeping existing playback shortcuts unchanged.
+- [x] Keep the existing bottom Playing panel as the compact global status surface.
+- [x] Verify responsive rendering and navigation with focused UI tests and `go test ./...`.
