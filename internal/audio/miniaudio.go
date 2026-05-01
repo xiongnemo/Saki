@@ -27,15 +27,17 @@ const (
 )
 
 type MiniAudioBackend struct {
-	mu sync.Mutex
+	opMu sync.Mutex
+	mu   sync.Mutex
 
 	ctx    *malgo.AllocatedContext
-	device *malgo.Device
+	device miniAudioDevice
 	source pcmSource
 
 	events    chan Event
 	loaded    bool
 	paused    bool
+	starting  bool
 	completed bool
 	position  float64
 	duration  float64
@@ -55,6 +57,12 @@ func NewMiniAudioBackend() *MiniAudioBackend {
 	}
 }
 
+type miniAudioDevice interface {
+	Start() error
+	Stop() error
+	Uninit()
+}
+
 func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error {
 	source, err := openPCMSource(ctx, request)
 	if err != nil {
@@ -62,19 +70,26 @@ func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error 
 	}
 	audioInfo := sourceAudioInfo(source)
 
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := b.closeLocked(); err != nil {
+	oldDevice, oldSource := b.detachLocked()
+	audioCtx := b.ctx
+	b.mu.Unlock()
+	if err := closeMiniAudioResources(oldDevice, oldSource); err != nil {
 		_ = source.Close()
 		return err
 	}
-	if b.ctx == nil {
-		audioCtx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	if audioCtx == nil {
+		audioCtx, err = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 		if err != nil {
 			_ = source.Close()
 			return err
 		}
+		b.mu.Lock()
 		b.ctx = audioCtx
+		b.mu.Unlock()
 	}
 
 	config := malgo.DefaultDeviceConfig(malgo.Playback)
@@ -86,16 +101,18 @@ func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error 
 	callbacks := malgo.DeviceCallbacks{
 		Data: b.onSamples,
 	}
-	device, err := malgo.InitDevice(b.ctx.Context, config, callbacks)
+	device, err := malgo.InitDevice(audioCtx.Context, config, callbacks)
 	if err != nil {
 		_ = source.Close()
 		return err
 	}
 
+	b.mu.Lock()
 	b.device = device
 	b.source = source
 	b.loaded = true
 	b.paused = true
+	b.starting = false
 	b.completed = false
 	b.position = 0
 	b.duration = source.Duration()
@@ -104,56 +121,89 @@ func (b *MiniAudioBackend) Load(ctx context.Context, request LoadRequest) error 
 	b.lastBufferProgress = time.Time{}
 	b.lastPositionEvent = time.Time{}
 	b.emitLocked(Event{Type: EventFormat, AudioInfo: audioInfo})
+	b.mu.Unlock()
 	return nil
 }
 
 func (b *MiniAudioBackend) Play() error {
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.device == nil || b.source == nil {
+	device := b.device
+	if device == nil || b.source == nil {
+		b.mu.Unlock()
 		return errors.New("miniaudio has no loaded track")
 	}
 	if b.completed {
 		if err := b.source.SeekFrame(0); err != nil {
+			b.mu.Unlock()
 			return err
 		}
 		b.completed = false
 	}
-	if err := b.device.Start(); err != nil {
+	// miniaudio's Start() may synchronously request initial samples.
+	// Let the callback pass through while keeping the public state paused until Start succeeds.
+	b.starting = true
+	b.mu.Unlock()
+
+	if err := device.Start(); err != nil {
+		b.mu.Lock()
+		b.starting = false
+		b.mu.Unlock()
 		return err
 	}
+
+	b.mu.Lock()
+	b.starting = false
 	b.loaded = true
 	b.paused = false
+	b.mu.Unlock()
 	return nil
 }
 
 func (b *MiniAudioBackend) Pause() error {
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.device != nil {
-		if err := b.device.Stop(); err != nil {
+	device := b.device
+	b.mu.Unlock()
+	if device != nil {
+		if err := device.Stop(); err != nil {
 			return err
 		}
 	}
+	b.mu.Lock()
 	b.paused = true
+	b.starting = false
+	b.mu.Unlock()
 	return nil
 }
 
 func (b *MiniAudioBackend) Stop() error {
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.device != nil {
-		if err := b.device.Stop(); err != nil {
+	device := b.device
+	b.mu.Unlock()
+	if device != nil {
+		if err := device.Stop(); err != nil {
 			return err
 		}
 	}
+
+	b.mu.Lock()
 	if b.source != nil {
 		_ = b.source.SeekFrame(0)
 	}
 	b.position = 0
 	b.paused = true
+	b.starting = false
 	b.loaded = b.source != nil
 	b.completed = false
+	b.mu.Unlock()
 	return nil
 }
 
@@ -222,32 +272,33 @@ func (b *MiniAudioBackend) Events() <-chan Event {
 }
 
 func (b *MiniAudioBackend) Close() error {
+	b.opMu.Lock()
+	defer b.opMu.Unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := b.closeLocked(); err != nil {
-		return err
-	}
-	if b.ctx != nil {
-		if err := b.ctx.Uninit(); err != nil {
-			return err
+	device, source := b.detachLocked()
+	audioCtx := b.ctx
+	b.ctx = nil
+	b.mu.Unlock()
+
+	err := closeMiniAudioResources(device, source)
+	if audioCtx != nil {
+		if ctxErr := audioCtx.Uninit(); err == nil && ctxErr != nil {
+			err = ctxErr
 		}
-		b.ctx.Free()
-		b.ctx = nil
+		audioCtx.Free()
 	}
-	return nil
+	return err
 }
 
-func (b *MiniAudioBackend) closeLocked() error {
-	if b.device != nil {
-		b.device.Uninit()
-		b.device = nil
-	}
-	if b.source != nil {
-		_ = b.source.Close()
-		b.source = nil
-	}
+func (b *MiniAudioBackend) detachLocked() (miniAudioDevice, pcmSource) {
+	device := b.device
+	source := b.source
+	b.device = nil
+	b.source = nil
 	b.loaded = false
 	b.paused = true
+	b.starting = false
 	b.completed = false
 	b.position = 0
 	b.duration = 0
@@ -255,6 +306,16 @@ func (b *MiniAudioBackend) closeLocked() error {
 	b.lastBufferingKnown = false
 	b.lastBufferProgress = time.Time{}
 	b.lastPositionEvent = time.Time{}
+	return device, source
+}
+
+func closeMiniAudioResources(device miniAudioDevice, source pcmSource) error {
+	if device != nil {
+		device.Uninit()
+	}
+	if source != nil {
+		return source.Close()
+	}
 	return nil
 }
 
@@ -264,7 +325,7 @@ func (b *MiniAudioBackend) onSamples(output, _ []byte, _ uint32) {
 	for i := range output {
 		output[i] = 0
 	}
-	if b.paused || b.source == nil || b.completed {
+	if (b.paused && !b.starting) || b.source == nil || b.completed {
 		return
 	}
 

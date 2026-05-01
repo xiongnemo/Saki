@@ -228,3 +228,12 @@ Status: completed.
 - [x] Size the vertical/top-cover Now Playing cover from the image aspect ratio before filling extra width.
 - [x] Keep enough rows for title, metadata, progress, two-row buttons, and status.
 - [x] Add focused UI coverage for square and wide cover aspect behavior and run `go test ./...`.
+
+## Headless Linux Playback Freeze
+
+Status: completed.
+
+- [x] Avoid holding `MiniAudioBackend.mu` while starting, stopping, or uninitializing miniaudio devices.
+- [x] Move UI-triggered playback commands off the TUI event loop and report errors safely.
+- [x] Fall back from miniaudio `Play()` errors to mpv in auto mode after a successful load.
+- [x] Verify with focused tests, `go test ./...`, and a remote PipeWire playback check on `192.168.1.120`.

@@ -321,10 +321,10 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		a.showSettings(true)
 		return nil
 	case tcell.KeyCtrlN:
-		a.player.Next()
+		a.runPlaybackCommand(func() { a.player.Next() })
 		return nil
 	case tcell.KeyCtrlB:
-		a.player.Previous()
+		a.runPlaybackCommand(func() { a.player.Previous() })
 		return nil
 	case tcell.KeyCtrlT:
 		a.player.ToggleRepeat()
@@ -352,7 +352,7 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 			return nil
 		}
 		if event.Modifiers()&tcell.ModCtrl != 0 {
-			a.player.Seek(10, true)
+			a.runPlaybackCommand(func() { a.player.Seek(10, true) })
 			return nil
 		}
 	case tcell.KeyLeft:
@@ -360,7 +360,7 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 			return nil
 		}
 		if event.Modifiers()&tcell.ModCtrl != 0 {
-			a.player.Seek(-10, true)
+			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
 			return nil
 		}
 	case tcell.KeyRune:
@@ -368,7 +368,7 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 			if textInputFocused {
 				return event
 			}
-			a.player.PlayPause()
+			a.runPlaybackCommand(func() { a.player.PlayPause() })
 			return nil
 		}
 	}
@@ -404,11 +404,11 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 		}
 	case tcell.KeyRight:
 		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
-			a.player.Seek(10, true)
+			a.runPlaybackCommand(func() { a.player.Seek(10, true) })
 		}
 	case tcell.KeyLeft:
 		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
-			a.player.Seek(-10, true)
+			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
 		}
 	case tcell.KeyRune:
 		if event.Rune() == ' ' {
@@ -424,16 +424,23 @@ func (a *App) handleNowPlayingAction(action nowPlayingAction) {
 	}
 	switch action {
 	case nowPlayingActionPrevious:
-		a.player.Previous()
+		a.runPlaybackCommand(func() { a.player.Previous() })
 	case nowPlayingActionPlayPause:
-		a.player.PlayPause()
+		a.runPlaybackCommand(func() { a.player.PlayPause() })
 	case nowPlayingActionNext:
-		a.player.Next()
+		a.runPlaybackCommand(func() { a.player.Next() })
 	case nowPlayingActionRepeat:
 		a.player.ToggleRepeat()
 	case nowPlayingActionShuffle:
 		a.player.Shuffle()
 	}
+}
+
+func (a *App) runPlaybackCommand(command func()) {
+	if command == nil {
+		return
+	}
+	go command()
 }
 
 func (a *App) handleQueueKey(event *tcell.EventKey) bool {

@@ -96,6 +96,36 @@ func TestControlsHelpViewKeepsTwoLinesAfterResize(t *testing.T) {
 	}
 }
 
+func TestRunPlaybackCommandDoesNotBlockUI(t *testing.T) {
+	app := &App{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+
+	app.runPlaybackCommand(func() {
+		close(started)
+		<-release
+		close(finished)
+	})
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("playback command did not start")
+	}
+	select {
+	case <-finished:
+		t.Fatal("playback command should still be blocked in its goroutine")
+	default:
+	}
+	close(release)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("playback command did not finish after release")
+	}
+}
+
 func TestApplyListFocusStyleDrawsFocusedAndUnfocused(t *testing.T) {
 	list := tview.NewList().ShowSecondaryText(false)
 	list.AddItem("alpha", "", 0, nil)
