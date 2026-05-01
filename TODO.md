@@ -245,3 +245,11 @@ Status: completed.
 - [x] Add `Ctrl+Up` and `Ctrl+Down` as reliable volume shortcuts for terminals where `Ctrl+I` is indistinguishable from Tab.
 - [x] Keep `Ctrl+I` and `Ctrl+K` as compatibility aliases.
 - [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.
+
+## TTY Volume Shortcut Follow-Up
+
+Status: completed.
+
+- [x] Replace volume shortcuts with TTY-safe `-` for down and `=` for up.
+- [x] Remove previous `Ctrl+Up`/`Ctrl+Down` and `Ctrl+I`/`Ctrl+K` compatibility aliases.
+- [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.
