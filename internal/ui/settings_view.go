@@ -705,7 +705,7 @@ func (p *systemTextPopup) Draw(screen tcell.Screen) {
 	p.cancelRect = settingsRect{x: innerX + 10, y: buttonY, width: 10, height: 1}
 	drawStyledText(screen, p.saveRect.x, p.saveRect.y, p.saveRect.width, " Save ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent).Bold(true))
 	drawStyledText(screen, p.cancelRect.x, p.cancelRect.y, p.cancelRect.width, " Cancel ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent))
-	help := "Ctrl+S save | Esc close"
+	help := "F2 save | Esc close"
 	if p.message != "" {
 		help = p.message
 	}
@@ -726,7 +726,7 @@ func (p *systemTextPopup) InputHandler() func(event *tcell.EventKey, setFocus fu
 		case tcell.KeyEscape:
 			p.cancelAndClose()
 			return
-		case tcell.KeyCtrlS:
+		case tcell.KeyF2:
 			p.save()
 			return
 		}

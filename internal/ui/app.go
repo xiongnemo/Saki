@@ -39,8 +39,8 @@ var (
 const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
-	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
-	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | -/= Volume | C-Left/Right Seek | C-q Quit"
+	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | / Filter | 6 System"
+	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | r Repeat | s Shuffle | -/= Volume | ,/. Seek | q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
@@ -254,9 +254,6 @@ func newControlsHelpView() *tview.TextView {
 func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 	if a.hasSystemEditPopup() {
 		switch event.Key() {
-		case tcell.KeyCtrlQ:
-			a.stop()
-			return nil
 		case tcell.KeyEscape:
 			a.closeSystemEditPopup()
 			return nil
@@ -281,9 +278,6 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 
 	textInputFocused := acceptsTextInput(a.app.GetFocus())
 	switch event.Key() {
-	case tcell.KeyCtrlQ:
-		a.stop()
-		return nil
 	case tcell.KeyTab:
 		if a.contentOwnsTab && a.focusTarget == appFocusContent {
 			return event
@@ -310,36 +304,6 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		if a.handleQueueKey(event) {
 			return nil
 		}
-	case tcell.KeyCtrlA:
-		a.showArtists(true)
-		return nil
-	case tcell.KeyCtrlL:
-		a.showAlbums(true)
-		return nil
-	case tcell.KeyCtrlP:
-		a.showPlaylists(true)
-		return nil
-	case tcell.KeyCtrlR:
-		a.showSearch(true)
-		return nil
-	case tcell.KeyCtrlO:
-		a.showNowPlaying(true)
-		return nil
-	case tcell.KeyCtrlS:
-		a.showSettings(true)
-		return nil
-	case tcell.KeyCtrlN:
-		a.runPlaybackCommand(func() { a.player.Next() })
-		return nil
-	case tcell.KeyCtrlB:
-		a.runPlaybackCommand(func() { a.player.Previous() })
-		return nil
-	case tcell.KeyCtrlT:
-		a.player.ToggleRepeat()
-		return nil
-	case tcell.KeyCtrlH:
-		a.player.Shuffle()
-		return nil
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
 		if textInputFocused {
 			return event
@@ -353,41 +317,74 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		if a.handleQueueKey(event) {
 			return nil
 		}
-		if event.Modifiers()&tcell.ModCtrl != 0 {
-			a.runPlaybackCommand(func() { a.player.Seek(10, true) })
-			return nil
-		}
 	case tcell.KeyLeft:
 		if a.handleQueueKey(event) {
 			return nil
 		}
-		if event.Modifiers()&tcell.ModCtrl != 0 {
-			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
-			return nil
-		}
 	case tcell.KeyRune:
+		if textInputFocused {
+			return event
+		}
 		switch {
 		case event.Rune() == ' ':
-			if textInputFocused {
-				return event
-			}
 			a.runPlaybackCommand(func() { a.player.PlayPause() })
 			return nil
 		case isVolumeUpShortcut(event):
-			if textInputFocused {
-				return event
-			}
 			a.player.SetVolume(5, true)
 			return nil
 		case isVolumeDownShortcut(event):
-			if textInputFocused {
-				return event
-			}
 			a.player.SetVolume(-5, true)
+			return nil
+		case a.handleGlobalRuneShortcut(event.Rune()):
 			return nil
 		}
 	}
 	return event
+}
+
+func (a *App) handleGlobalRuneShortcut(r rune) bool {
+	switch r {
+	case 'q':
+		a.stop()
+	case '1':
+		if a.settingsViewFocused() {
+			return false
+		}
+		a.showArtists(true)
+	case '2':
+		if a.settingsViewFocused() {
+			return false
+		}
+		a.showAlbums(true)
+	case '3':
+		a.showPlaylists(true)
+	case '4':
+		a.showSearch(true)
+	case '5':
+		a.showNowPlaying(true)
+	case '6':
+		a.showSettings(true)
+	case ';':
+		a.runPlaybackCommand(func() { a.player.Previous() })
+	case '\'':
+		a.runPlaybackCommand(func() { a.player.Next() })
+	case 'r':
+		a.player.ToggleRepeat()
+	case 's':
+		a.player.Shuffle()
+	case ',':
+		a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
+	case '.':
+		a.runPlaybackCommand(func() { a.player.Seek(10, true) })
+	default:
+		return false
+	}
+	return true
+}
+
+func (a *App) settingsViewFocused() bool {
+	_, ok := a.app.GetFocus().(*settingsView)
+	return ok
 }
 
 func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
@@ -395,30 +392,14 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 		return true
 	}
 	switch event.Key() {
-	case tcell.KeyCtrlQ:
-		a.stop()
 	case tcell.KeyEscape, tcell.KeyBackspace, tcell.KeyBackspace2:
 		a.closeNowPlaying()
-	case tcell.KeyCtrlO:
-		a.closeNowPlaying()
-	case tcell.KeyCtrlN:
-		a.handleNowPlayingAction(nowPlayingActionNext)
-	case tcell.KeyCtrlB:
-		a.handleNowPlayingAction(nowPlayingActionPrevious)
-	case tcell.KeyCtrlT:
-		a.handleNowPlayingAction(nowPlayingActionRepeat)
-	case tcell.KeyCtrlH:
-		a.handleNowPlayingAction(nowPlayingActionShuffle)
-	case tcell.KeyRight:
-		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
-			a.runPlaybackCommand(func() { a.player.Seek(10, true) })
-		}
-	case tcell.KeyLeft:
-		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
-			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
-		}
 	case tcell.KeyRune:
 		switch {
+		case event.Rune() == 'q':
+			a.stop()
+		case event.Rune() == '5':
+			a.closeNowPlaying()
 		case event.Rune() == ' ':
 			a.handleNowPlayingAction(nowPlayingActionPlayPause)
 		case isVolumeUpShortcut(event):
@@ -429,6 +410,18 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 			if a.player != nil {
 				a.player.SetVolume(-5, true)
 			}
+		case event.Rune() == ';':
+			a.handleNowPlayingAction(nowPlayingActionPrevious)
+		case event.Rune() == '\'':
+			a.handleNowPlayingAction(nowPlayingActionNext)
+		case event.Rune() == 'r':
+			a.handleNowPlayingAction(nowPlayingActionRepeat)
+		case event.Rune() == 's':
+			a.handleNowPlayingAction(nowPlayingActionShuffle)
+		case event.Rune() == ',' && a.player != nil:
+			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
+		case event.Rune() == '.' && a.player != nil:
+			a.runPlaybackCommand(func() { a.player.Seek(10, true) })
 		}
 	}
 	return true
@@ -863,7 +856,7 @@ func (a *App) showAlbumAt(id string, push bool, selected int) {
 				})
 			}
 			list.SetListInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-				if event.Key() == tcell.KeyCtrlM {
+				if event.Key() == tcell.KeyRune && event.Rune() == 'a' {
 					index := list.GetCurrentItem()
 					if index >= 0 && index < len(album.Songs) {
 						a.player.AddToCurrentPlaylist(album.Songs[index])
@@ -937,7 +930,7 @@ func (a *App) showPlaylistAt(id string, push bool, selected int) {
 				})
 			}
 			list.SetListInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-				if event.Key() == tcell.KeyCtrlM {
+				if event.Key() == tcell.KeyRune && event.Rune() == 'a' {
 					index := list.GetCurrentItem()
 					if index >= 0 && index < len(playlist.Entries) {
 						a.player.AddToCurrentPlaylist(playlist.Entries[index])

@@ -280,7 +280,7 @@ func TestSearchTabCycleReturnsFromQueueToFirstAvailablePane(t *testing.T) {
 	}
 }
 
-func TestTextInputGetsBackspaceAndSpace(t *testing.T) {
+func TestTextInputGetsEditingAndRuneShortcuts(t *testing.T) {
 	app := &App{app: tview.NewApplication()}
 	input := tview.NewInputField()
 	app.app.SetFocus(input)
@@ -292,6 +292,12 @@ func TestTextInputGetsBackspaceAndSpace(t *testing.T) {
 	space := tcell.NewEventKey(tcell.KeyRune, ' ', tcell.ModNone)
 	if got := app.handleGlobalKey(space); got != space {
 		t.Fatal("space in input should pass through")
+	}
+	for _, r := range []rune{'1', '2', '3', '4', '5', '6', ';', '\'', 'r', 's', ',', '.', '-', '=', 'q'} {
+		event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
+		if got := app.handleGlobalKey(event); got != event {
+			t.Fatalf("%q in input should pass through", r)
+		}
 	}
 }
 
@@ -512,6 +518,19 @@ func TestSystemTabShortcutsSwitchTabs(t *testing.T) {
 	handler(tcell.NewEventKey(tcell.KeyRune, '2', tcell.ModNone), setFocus)
 	if view.activeTab != systemTabSettings {
 		t.Fatalf("tab after 2 = %v, want settings", view.activeTab)
+	}
+}
+
+func TestGlobalNumberShortcutsYieldToSystemTabs(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	view := newSettingsView(app, models.Config{})
+	app.app.SetFocus(view)
+
+	for _, r := range []rune{'1', '2'} {
+		event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
+		if got := app.handleGlobalKey(event); got != event {
+			t.Fatalf("%q should pass through to System tab handler", r)
+		}
 	}
 }
 
@@ -924,8 +943,8 @@ func TestNowPlayingShortcutShowsPage(t *testing.T) {
 	}
 	app.app.SetFocus(previousFocus)
 
-	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyCtrlO, 0, tcell.ModNone)); got != nil {
-		t.Fatalf("Ctrl+O should be handled, got %v", got)
+	if got := app.handleGlobalKey(tcell.NewEventKey(tcell.KeyRune, '5', tcell.ModNone)); got != nil {
+		t.Fatalf("5 should open Now Playing, got %v", got)
 	}
 	name, item := app.pages.GetFrontPage()
 	if name != nowPlayingPageName {

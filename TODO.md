@@ -253,3 +253,12 @@ Status: completed.
 - [x] Replace volume shortcuts with TTY-safe `-` for down and `=` for up.
 - [x] Remove previous `Ctrl+Up`/`Ctrl+Down` and `Ctrl+I`/`Ctrl+K` compatibility aliases.
 - [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.
+
+## TTY-Safe Global Bindings
+
+Status: completed.
+
+- [x] Replace Ctrl-based view/playback bindings with text-input-safe rune bindings.
+- [x] Use `;` for previous track and `'` for next track, with `,`/`.` for seek.
+- [x] Replace `Ctrl+M` add-to-queue with a TTY-safe rune binding.
+- [x] Update Controls help text and focused input-routing tests, then run `go test ./...`.
