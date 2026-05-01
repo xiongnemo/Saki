@@ -91,7 +91,7 @@ func TestControlsHelpViewKeepsTwoLinesAfterResize(t *testing.T) {
 	screen.SetSize(96, 4)
 	help.SetRect(0, 0, 96, 4)
 	help.Draw(screen)
-	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") || !strings.Contains(row, "-/= Volume") {
+	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") || !strings.Contains(row, "-/= Vol 5%") || !strings.Contains(row, "[/] Vol 1%") {
 		t.Fatalf("wide controls second line = %q, want playback shortcuts after resize", row)
 	}
 }
@@ -114,6 +114,12 @@ func TestVolumeShortcutPredicatesUseTTYRunes(t *testing.T) {
 	}
 	if isVolumeDownShortcut(tcell.NewEventKey(tcell.KeyCtrlK, 0, tcell.ModNone)) {
 		t.Fatal("Ctrl+K should not remain a compatibility volume shortcut")
+	}
+	if !isFineVolumeUpShortcut(tcell.NewEventKey(tcell.KeyRune, ']', tcell.ModNone)) {
+		t.Fatal("] should be a fine volume-up shortcut")
+	}
+	if !isFineVolumeDownShortcut(tcell.NewEventKey(tcell.KeyRune, '[', tcell.ModNone)) {
+		t.Fatal("[ should be a fine volume-down shortcut")
 	}
 }
 
@@ -293,7 +299,7 @@ func TestTextInputGetsEditingAndRuneShortcuts(t *testing.T) {
 	if got := app.handleGlobalKey(space); got != space {
 		t.Fatal("space in input should pass through")
 	}
-	for _, r := range []rune{'1', '2', '3', '4', '5', '6', ';', '\'', 'r', 's', ',', '.', '-', '=', 'q'} {
+	for _, r := range []rune{'1', '2', '3', '4', '5', '6', ';', '\'', 'r', 's', ',', '.', '-', '=', '[', ']', 'q'} {
 		event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
 		if got := app.handleGlobalKey(event); got != event {
 			t.Fatalf("%q in input should pass through", r)
@@ -526,7 +532,7 @@ func TestGlobalNumberShortcutsYieldToSystemTabs(t *testing.T) {
 	view := newSettingsView(app, models.Config{})
 	app.app.SetFocus(view)
 
-	for _, r := range []rune{'1', '2'} {
+	for _, r := range []rune{'1', '2', '[', ']'} {
 		event := tcell.NewEventKey(tcell.KeyRune, r, tcell.ModNone)
 		if got := app.handleGlobalKey(event); got != event {
 			t.Fatalf("%q should pass through to System tab handler", r)

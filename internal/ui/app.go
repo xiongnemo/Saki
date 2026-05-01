@@ -40,7 +40,7 @@ const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
 	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | / Filter | 6 System"
-	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | r Repeat | s Shuffle | -/= Volume | ,/. Seek | q Quit"
+	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | r Repeat | s Shuffle | -/= Vol 5% | [/] Vol 1% | ,/. Seek | q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
@@ -247,7 +247,7 @@ func newControlsHelpView() *tview.TextView {
 	help.SetWordWrap(false)
 	help.SetBorder(true)
 	setPlainTitle(help, "Controls")
-	help.SetText(controlsHelpText)
+	help.SetText(tview.Escape(controlsHelpText))
 	return help
 }
 
@@ -335,6 +335,12 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		case isVolumeDownShortcut(event):
 			a.player.SetVolume(-5, true)
 			return nil
+		case !a.settingsViewFocused() && isFineVolumeUpShortcut(event):
+			a.player.SetVolume(1, true)
+			return nil
+		case !a.settingsViewFocused() && isFineVolumeDownShortcut(event):
+			a.player.SetVolume(-1, true)
+			return nil
 		case a.handleGlobalRuneShortcut(event.Rune()):
 			return nil
 		}
@@ -410,6 +416,14 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 			if a.player != nil {
 				a.player.SetVolume(-5, true)
 			}
+		case isFineVolumeUpShortcut(event):
+			if a.player != nil {
+				a.player.SetVolume(1, true)
+			}
+		case isFineVolumeDownShortcut(event):
+			if a.player != nil {
+				a.player.SetVolume(-1, true)
+			}
 		case event.Rune() == ';':
 			a.handleNowPlayingAction(nowPlayingActionPrevious)
 		case event.Rune() == '\'':
@@ -458,6 +472,14 @@ func isVolumeUpShortcut(event *tcell.EventKey) bool {
 
 func isVolumeDownShortcut(event *tcell.EventKey) bool {
 	return event != nil && event.Key() == tcell.KeyRune && event.Rune() == '-'
+}
+
+func isFineVolumeUpShortcut(event *tcell.EventKey) bool {
+	return event != nil && event.Key() == tcell.KeyRune && event.Rune() == ']'
+}
+
+func isFineVolumeDownShortcut(event *tcell.EventKey) bool {
+	return event != nil && event.Key() == tcell.KeyRune && event.Rune() == '['
 }
 
 func (a *App) handleQueueKey(event *tcell.EventKey) bool {

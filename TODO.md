@@ -262,3 +262,11 @@ Status: completed.
 - [x] Use `;` for previous track and `'` for next track, with `,`/`.` for seek.
 - [x] Replace `Ctrl+M` add-to-queue with a TTY-safe rune binding.
 - [x] Update Controls help text and focused input-routing tests, then run `go test ./...`.
+
+## Fine Volume Shortcuts
+
+Status: completed.
+
+- [x] Add `[` and `]` as TTY-safe 1% volume down/up shortcuts.
+- [x] Keep `[` and `]` available for System tab switching and text input.
+- [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.
