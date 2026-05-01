@@ -40,7 +40,7 @@ const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
 	controlsViewHelpText     = "C-a Artists | C-l Albums | C-p Playlists | C-r Search | C-o Playing | / Search View | C-s System"
-	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-i/k Volume | C-Left/Right Seek | C-q Quit"
+	controlsPlaybackHelpText = "Space Play/Pause | C-b Prev | C-n Next | C-t Repeat | C-h Shuffle | C-Up/Down Volume | C-Left/Right Seek | C-q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
@@ -298,7 +298,23 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		if a.handleFocusTraversal(true) {
 			return nil
 		}
-	case tcell.KeyUp, tcell.KeyDown, tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyEnter:
+	case tcell.KeyUp:
+		if isVolumeUpShortcut(event) {
+			a.player.SetVolume(5, true)
+			return nil
+		}
+		if a.handleQueueKey(event) {
+			return nil
+		}
+	case tcell.KeyDown:
+		if isVolumeDownShortcut(event) {
+			a.player.SetVolume(-5, true)
+			return nil
+		}
+		if a.handleQueueKey(event) {
+			return nil
+		}
+	case tcell.KeyHome, tcell.KeyEnd, tcell.KeyPgUp, tcell.KeyPgDn, tcell.KeyEnter:
 		if a.handleQueueKey(event) {
 			return nil
 		}
@@ -410,6 +426,14 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 		if event.Modifiers()&tcell.ModCtrl != 0 && a.player != nil {
 			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
 		}
+	case tcell.KeyUp:
+		if isVolumeUpShortcut(event) && a.player != nil {
+			a.player.SetVolume(5, true)
+		}
+	case tcell.KeyDown:
+		if isVolumeDownShortcut(event) && a.player != nil {
+			a.player.SetVolume(-5, true)
+		}
 	case tcell.KeyRune:
 		if event.Rune() == ' ' {
 			a.handleNowPlayingAction(nowPlayingActionPlayPause)
@@ -441,6 +465,14 @@ func (a *App) runPlaybackCommand(command func()) {
 		return
 	}
 	go command()
+}
+
+func isVolumeUpShortcut(event *tcell.EventKey) bool {
+	return event != nil && event.Key() == tcell.KeyUp && event.Modifiers()&tcell.ModCtrl != 0
+}
+
+func isVolumeDownShortcut(event *tcell.EventKey) bool {
+	return event != nil && event.Key() == tcell.KeyDown && event.Modifiers()&tcell.ModCtrl != 0
 }
 
 func (a *App) handleQueueKey(event *tcell.EventKey) bool {

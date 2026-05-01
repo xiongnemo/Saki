@@ -237,3 +237,11 @@ Status: completed.
 - [x] Move UI-triggered playback commands off the TUI event loop and report errors safely.
 - [x] Fall back from miniaudio `Play()` errors to mpv in auto mode after a successful load.
 - [x] Verify with focused tests, `go test ./...`, and a remote PipeWire playback check on `192.168.1.120`.
+
+## Cross-Terminal Volume Shortcuts
+
+Status: completed.
+
+- [x] Add `Ctrl+Up` and `Ctrl+Down` as reliable volume shortcuts for terminals where `Ctrl+I` is indistinguishable from Tab.
+- [x] Keep `Ctrl+I` and `Ctrl+K` as compatibility aliases.
+- [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.

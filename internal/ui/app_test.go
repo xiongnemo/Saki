@@ -91,8 +91,26 @@ func TestControlsHelpViewKeepsTwoLinesAfterResize(t *testing.T) {
 	screen.SetSize(96, 4)
 	help.SetRect(0, 0, 96, 4)
 	help.Draw(screen)
-	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") {
+	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") || !strings.Contains(row, "C-Up/Down Volume") {
 		t.Fatalf("wide controls second line = %q, want playback shortcuts after resize", row)
+	}
+}
+
+func TestVolumeShortcutPredicatesUseCtrlArrows(t *testing.T) {
+	if !isVolumeUpShortcut(tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModCtrl)) {
+		t.Fatal("Ctrl+Up should be a volume-up shortcut")
+	}
+	if !isVolumeDownShortcut(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModCtrl)) {
+		t.Fatal("Ctrl+Down should be a volume-down shortcut")
+	}
+	if isVolumeUpShortcut(tcell.NewEventKey(tcell.KeyUp, 0, tcell.ModNone)) {
+		t.Fatal("plain Up should remain navigation")
+	}
+	if isVolumeDownShortcut(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone)) {
+		t.Fatal("plain Down should remain navigation")
+	}
+	if isVolumeUpShortcut(tcell.NewEventKey(tcell.KeyTab, 0, tcell.ModNone)) {
+		t.Fatal("Tab/Ctrl+I should not be treated as Ctrl+Up")
 	}
 }
 
