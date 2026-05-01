@@ -40,7 +40,7 @@ const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
 	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | / Filter | 6 System"
-	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | r Repeat | s Shuffle | -/= Vol 5% | [/] Vol 1% | ,/. Seek | q Quit"
+	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | a Add | r Repeat | s Shuffle | -/= Vol 5% | [/] Vol 1% | ,/. Seek | q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
 
@@ -311,6 +311,9 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 		a.goBack()
 		return nil
 	case tcell.KeyEscape:
+		if textInputFocused {
+			return event
+		}
 		a.goBack()
 		return nil
 	case tcell.KeyRight:

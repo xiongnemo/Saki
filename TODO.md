@@ -270,3 +270,11 @@ Status: completed.
 - [x] Add `[` and `]` as TTY-safe 1% volume down/up shortcuts.
 - [x] Keep `[` and `]` available for System tab switching and text input.
 - [x] Update Controls help text and focused shortcut tests, then run `go test ./...`.
+
+## Filter Escape and Add Hint
+
+Status: completed.
+
+- [x] Let in-view filter inputs receive `Esc` so they can exit filter mode.
+- [x] Document the `a` add-to-queue binding in Controls.
+- [x] Add focused UI coverage and run `go test ./...`.

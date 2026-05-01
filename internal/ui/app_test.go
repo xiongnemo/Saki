@@ -88,10 +88,10 @@ func TestControlsHelpViewKeepsTwoLinesAfterResize(t *testing.T) {
 	}
 
 	screen.Clear()
-	screen.SetSize(96, 4)
-	help.SetRect(0, 0, 96, 4)
+	screen.SetSize(120, 4)
+	help.SetRect(0, 0, 120, 4)
 	help.Draw(screen)
-	if row := screenRowText(screen, 2, 96); !strings.Contains(row, "Space Play/Pause") || !strings.Contains(row, "-/= Vol 5%") || !strings.Contains(row, "[/] Vol 1%") {
+	if row := screenRowText(screen, 2, 120); !strings.Contains(row, "Space Play/Pause") || !strings.Contains(row, "a Add") || !strings.Contains(row, "-/= Vol 5%") || !strings.Contains(row, "[/] Vol 1%") {
 		t.Fatalf("wide controls second line = %q, want playback shortcuts after resize", row)
 	}
 }
@@ -1321,6 +1321,38 @@ func TestFilterableListFiltersAndActivatesOriginalItem(t *testing.T) {
 	}
 	if called != 1 {
 		t.Fatalf("selected action called with %d, want original index 1", called)
+	}
+}
+
+func TestFilterableListEscapePassesThroughGlobalCapture(t *testing.T) {
+	app := &App{app: tview.NewApplication()}
+	list := app.newFilterableList(appFocusContent)
+	list.AddItem("Alpha", "", 0, nil)
+	list.AddItem("Beta", "", 0, nil)
+	list.SetCurrentItem(1)
+
+	handler := list.list.InputHandler()
+	handler(tcell.NewEventKey(tcell.KeyRune, '/', tcell.ModNone), nil)
+	list.input.SetText("alp")
+	if !list.filtering {
+		t.Fatal("expected filter mode")
+	}
+	if got := list.list.GetItemCount(); got != 1 {
+		t.Fatalf("filtered item count = %d, want 1", got)
+	}
+
+	escape := tcell.NewEventKey(tcell.KeyEscape, 0, tcell.ModNone)
+	if got := app.handleGlobalKey(escape); got != escape {
+		t.Fatal("escape in filter input should pass through global capture")
+	}
+	if inputHandler := list.input.InputHandler(); inputHandler != nil {
+		inputHandler(escape, nil)
+	}
+	if list.filtering {
+		t.Fatal("escape should exit filter mode")
+	}
+	if got := list.list.GetItemCount(); got != 2 {
+		t.Fatalf("restored item count = %d, want 2", got)
 	}
 }
 
