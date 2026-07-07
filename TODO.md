@@ -1,5 +1,13 @@
 # TODO
 
+## Windows SMTC MSVC 19.51 Compatibility
+
+Status: completed.
+
+- [x] Add the MSVC STL coroutine deprecation suppression define to the Windows SMTC shim build command.
+- [x] Keep the manual shim build documentation aligned with the scripted build flags.
+- [x] Verify with focused local checks and a local MSVC shim compile.
+
 ## Endpoint High Availability Improvements
 
 Status: completed.
