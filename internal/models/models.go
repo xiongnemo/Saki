@@ -155,13 +155,14 @@ func (p Playlist) String() string {
 }
 
 type Account struct {
-	Username     string     `json:"username"`
-	Password     string     `json:"password"`
-	URL          string     `json:"url,omitempty"`
-	Endpoints    []Endpoint `json:"endpoints"`
-	Salt         string     `json:"salt"`
-	Token        string     `json:"token"`
-	UsePlaintext bool       `json:"usePlaintext"`
+	Username           string     `json:"username"`
+	Password           string     `json:"password"`
+	URL                string     `json:"url,omitempty"`
+	Endpoints          []Endpoint `json:"endpoints"`
+	Salt               string     `json:"salt"`
+	Token              string     `json:"token"`
+	UsePlaintext       bool       `json:"usePlaintext"`
+	LibraryFingerprint string     `json:"libraryFingerprint,omitempty"`
 }
 
 type Endpoint struct {
@@ -243,24 +244,28 @@ func (s PlaybackState) String() string {
 }
 
 type CurrentState struct {
-	CurrentTrack       *Song
-	Position           float64
-	Playing            bool
-	Stopped            bool
-	Buffering          bool
-	BufferedSeconds    float64
-	BufferedBytes      int64
-	TotalBytes         int64
-	BufferedPercent    float64
-	BufferPercentKnown bool
-	CacheReady         bool
-	AudioInfo          AudioInfo
-	LastError          string
-	CurrentPlaylist    Playlist
-	CurrentTrackIndex  int
-	RepeatStatus       RepeatStatus
-	Shuffled           bool
-	Volume             float64
+	CurrentTrack           *Song
+	Position               float64
+	Playing                bool
+	Stopped                bool
+	Buffering              bool
+	BufferedSeconds        float64
+	BufferedBytes          int64
+	TotalBytes             int64
+	BufferedPercent        float64
+	BufferPercentKnown     bool
+	CacheReady             bool
+	AudioInfo              AudioInfo
+	LastError              string
+	ActiveEndpoint         Endpoint
+	EndpointCircuitState   string
+	EndpointFailoverReason string
+	EndpointLastError      string
+	CurrentPlaylist        Playlist
+	CurrentTrackIndex      int
+	RepeatStatus           RepeatStatus
+	Shuffled               bool
+	Volume                 float64
 }
 
 func SecondsAsMMSS(seconds int) string {

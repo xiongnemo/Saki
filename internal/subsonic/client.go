@@ -26,7 +26,8 @@ const (
 )
 
 type Client struct {
-	httpClient *http.Client
+	httpClient  *http.Client
+	healthReset chan struct{}
 
 	mu        sync.RWMutex
 	account   models.Account
@@ -37,18 +38,20 @@ type Client struct {
 
 type endpointRuntime struct {
 	models.Endpoint
-	Latency   time.Duration
-	EWMA      time.Duration
-	LastOK    time.Time
-	Failures  int
-	Successes int
+	Latency            time.Duration
+	EWMA               time.Duration
+	LastOK             time.Time
+	Failures           int
+	Successes          int
+	LastError          string
+	LastFailoverReason string
 }
 
 func NewClient(httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{httpClient: httpClient}
+	return &Client{httpClient: httpClient, healthReset: make(chan struct{}, 1)}
 }
 
 func (c *Client) Configure(cfg models.Config) models.Config {
@@ -75,6 +78,7 @@ func (c *Client) Configure(cfg models.Config) models.Config {
 	}
 	account.URL = ""
 
+	previousInterval := c.settings.HealthCheckIntervalSeconds
 	c.account = account
 	c.settings = cfg.Settings
 	if c.settings.HealthCheckIntervalSeconds <= 0 {
@@ -91,9 +95,13 @@ func (c *Client) Configure(cfg models.Config) models.Config {
 		c.endpoints = append(c.endpoints, endpointRuntime{Endpoint: endpoint})
 	}
 	c.active = c.firstEnabledLocked()
+	intervalChanged := previousInterval > 0 && previousInterval != c.settings.HealthCheckIntervalSeconds
 
 	cfg.Account = account
 	cfg.Settings = c.settings
+	if intervalChanged {
+		c.signalHealthResetLocked()
+	}
 	return cfg
 }
 
@@ -119,26 +127,32 @@ func (c *Client) EndpointStatuses() []EndpointStatus {
 	statuses := make([]EndpointStatus, 0, len(c.endpoints))
 	for i, endpoint := range c.endpoints {
 		statuses = append(statuses, EndpointStatus{
-			Endpoint:  endpoint.Endpoint,
-			Active:    i == c.active,
-			Latency:   endpoint.Latency,
-			EWMA:      endpoint.EWMA,
-			LastOK:    endpoint.LastOK,
-			Failures:  endpoint.Failures,
-			Successes: endpoint.Successes,
+			Endpoint:           endpoint.Endpoint,
+			Active:             i == c.active,
+			Latency:            endpoint.Latency,
+			EWMA:               endpoint.EWMA,
+			LastOK:             endpoint.LastOK,
+			Failures:           endpoint.Failures,
+			Successes:          endpoint.Successes,
+			CircuitState:       endpoint.circuitState(),
+			LastFailoverReason: endpoint.LastFailoverReason,
+			LastError:          endpoint.LastError,
 		})
 	}
 	return statuses
 }
 
 type EndpointStatus struct {
-	Endpoint  models.Endpoint
-	Active    bool
-	Latency   time.Duration
-	EWMA      time.Duration
-	LastOK    time.Time
-	Failures  int
-	Successes int
+	Endpoint           models.Endpoint
+	Active             bool
+	Latency            time.Duration
+	EWMA               time.Duration
+	LastOK             time.Time
+	Failures           int
+	Successes          int
+	CircuitState       string
+	LastFailoverReason string
+	LastError          string
 }
 
 type EndpointProbe struct {
@@ -176,16 +190,14 @@ func (c *Client) ProbeEndpoints(ctx context.Context, endpoints []models.Endpoint
 			results[i].Err = fmt.Errorf("endpoint disabled")
 			continue
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			start := time.Now()
 			info, err := c.pingEndpointInfo(ctx, endpoint.URL)
 			results[i].Latency = time.Since(start)
 			results[i].ServerVersion = info.Version
 			results[i].ServerType = info.Type
 			results[i].Err = err
-		}()
+		})
 	}
 	wg.Wait()
 	return results
@@ -209,14 +221,12 @@ func (c *Client) ProbeEndpointIdentities(ctx context.Context, endpoints []models
 			results[i].Err = fmt.Errorf("endpoint disabled")
 			continue
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			identity, err := c.endpointIdentity(ctx, endpoint)
 			identity.Endpoint = endpoint
 			identity.Err = err
 			results[i] = identity
-		}()
+		})
 	}
 	wg.Wait()
 	return results
@@ -228,19 +238,17 @@ func normalizeProbeEndpoint(endpoint models.Endpoint) models.Endpoint {
 }
 
 func (c *Client) StartHealthChecks(ctx context.Context) {
-	interval := time.Duration(c.healthIntervalSeconds()) * time.Second
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
-
 	go func() {
 		c.checkAllEndpoints(ctx)
+		interval := c.healthInterval()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				c.checkAllEndpoints(ctx)
+			case <-c.healthReset:
+				ticker.Reset(c.healthInterval())
 			case <-ctx.Done():
 				return
 			}
@@ -459,7 +467,35 @@ func (c *Client) CoverArtURI(id string) string {
 }
 
 func (c *Client) GetCoverArt(ctx context.Context, id string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.CoverArtURI(id), nil)
+	data, _, err := c.GetCoverArtWithEndpoint(ctx, id)
+	return data, err
+}
+
+func (c *Client) GetCoverArtWithEndpoint(ctx context.Context, id string) ([]byte, models.Endpoint, error) {
+	active := c.activeBaseURL()
+	data, err := c.getCoverArtFromBase(ctx, active, id)
+	if err != nil {
+		c.markEndpointResult(active, 0, err)
+		fallback := c.fallbackBaseURL(active)
+		if fallback == "" || fallback == active {
+			return nil, c.endpointForBaseURL(active), err
+		}
+		data, retryErr := c.getCoverArtFromBase(ctx, fallback, id)
+		if retryErr != nil {
+			c.markEndpointResult(fallback, 0, retryErr)
+			return nil, c.endpointForBaseURL(fallback), err
+		}
+		c.markEndpointResult(fallback, 0, nil)
+		return data, c.endpointForBaseURL(fallback), nil
+	}
+	c.markEndpointResult(active, 0, nil)
+	return data, c.endpointForBaseURL(active), nil
+}
+
+func (c *Client) getCoverArtFromBase(ctx context.Context, baseURL string, id string) ([]byte, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, c.endpointTimeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.buildURLAt(baseURL, "getCoverArt", map[string]string{"id": id, "size": "300"}), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -475,25 +511,30 @@ func (c *Client) GetCoverArt(ctx context.Context, id string) ([]byte, error) {
 }
 
 func (c *Client) OpenStream(ctx context.Context, id string, rangeHeader string) (*http.Response, error) {
+	resp, _, err := c.OpenStreamWithEndpoint(ctx, id, rangeHeader)
+	return resp, err
+}
+
+func (c *Client) OpenStreamWithEndpoint(ctx context.Context, id string, rangeHeader string) (*http.Response, models.Endpoint, error) {
 	active := c.activeBaseURL()
 	resp, err := c.openStreamFromBase(ctx, active, id, rangeHeader)
 	if err == nil {
 		c.markEndpointResult(active, 0, nil)
-		return resp, nil
+		return resp, c.endpointForBaseURL(active), nil
 	}
 	c.markEndpointResult(active, 0, err)
 
 	fallback := c.fallbackBaseURL(active)
 	if fallback == "" || fallback == active {
-		return nil, err
+		return nil, c.endpointForBaseURL(active), err
 	}
 	resp, retryErr := c.openStreamFromBase(ctx, fallback, id, rangeHeader)
 	if retryErr != nil {
 		c.markEndpointResult(fallback, 0, retryErr)
-		return nil, err
+		return nil, c.endpointForBaseURL(fallback), err
 	}
 	c.markEndpointResult(fallback, 0, nil)
-	return resp, nil
+	return resp, c.endpointForBaseURL(fallback), nil
 }
 
 func (c *Client) Scrobble(ctx context.Context, id string) error {
@@ -572,7 +613,9 @@ func (c *Client) buildURLAt(baseURL, endpoint string, params map[string]string) 
 }
 
 func (c *Client) getFromBase(ctx context.Context, baseURL, endpoint string, params map[string]string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.buildURLAt(baseURL, endpoint, params), nil)
+	reqCtx, cancel := context.WithTimeout(ctx, c.endpointTimeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.buildURLAt(baseURL, endpoint, params), nil)
 	if err != nil {
 		return err
 	}
@@ -596,7 +639,7 @@ func (c *Client) openStreamFromBase(ctx context.Context, baseURL, id string, ran
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doWithHeaderTimeout(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -607,14 +650,70 @@ func (c *Client) openStreamFromBase(ctx context.Context, baseURL, id string, ran
 	return resp, nil
 }
 
+func (c *Client) doWithHeaderTimeout(ctx context.Context, req *http.Request) (*http.Response, error) {
+	transport := c.httpClient.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if httpTransport, ok := transport.(*http.Transport); ok {
+		clone := httpTransport.Clone()
+		clone.ResponseHeaderTimeout = c.endpointTimeout()
+		return clone.RoundTrip(req.WithContext(ctx))
+	}
+	headerCtx, cancel := context.WithCancel(ctx)
+	result := make(chan roundTripResult, 1)
+	go func() {
+		resp, err := transport.RoundTrip(req.WithContext(headerCtx))
+		result <- roundTripResult{resp: resp, err: err}
+	}()
+	timer := time.NewTimer(c.endpointTimeout())
+	defer timer.Stop()
+	select {
+	case res := <-result:
+		if res.err != nil {
+			cancel()
+			return nil, res.err
+		}
+		res.resp.Body = cancelOnClose{ReadCloser: res.resp.Body, cancel: cancel}
+		return res.resp, nil
+	case <-timer.C:
+		cancel()
+		go closeLateRoundTrip(result)
+		return nil, fmt.Errorf("stream response header timeout after %s: %w", c.endpointTimeout(), context.DeadlineExceeded)
+	case <-ctx.Done():
+		cancel()
+		go closeLateRoundTrip(result)
+		return nil, ctx.Err()
+	}
+}
+
+type roundTripResult struct {
+	resp *http.Response
+	err  error
+}
+
+func closeLateRoundTrip(result <-chan roundTripResult) {
+	res := <-result
+	if res.resp != nil && res.resp.Body != nil {
+		_ = res.resp.Body.Close()
+	}
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	c.cancel()
+	return c.ReadCloser.Close()
+}
+
 func (c *Client) checkAllEndpoints(ctx context.Context) {
 	c.mu.RLock()
 	snapshot := make([]endpointRuntime, len(c.endpoints))
 	copy(snapshot, c.endpoints)
-	timeout := time.Duration(c.settings.EndpointTimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 2 * time.Second
-	}
+	timeout := c.endpointTimeoutLocked()
 	c.mu.RUnlock()
 
 	for _, endpoint := range snapshot {
@@ -701,14 +800,17 @@ func (c *Client) markEndpointResult(baseURL string, latency time.Duration, err e
 	if err != nil {
 		endpoint.Failures++
 		endpoint.Successes = 0
+		endpoint.LastError = err.Error()
+		endpoint.LastFailoverReason = err.Error()
 		if index == c.active && endpoint.Failures >= 1 {
-			c.active = c.bestEndpointLocked(index)
+			c.active = c.bestEndpointLocked(index, false)
 		}
 		return
 	}
 
 	endpoint.Failures = 0
 	endpoint.Successes++
+	endpoint.LastError = ""
 	endpoint.LastOK = time.Now()
 	if latency > 0 {
 		endpoint.Latency = latency
@@ -748,6 +850,12 @@ func (c *Client) maybeSwitchLocked(candidate int) {
 func (c *Client) activeBaseURL() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if c.active >= 0 && c.active < len(c.endpoints) && c.endpoints[c.active].Enabled && !c.endpoints[c.active].isOpen() {
+		return c.endpoints[c.active].URL
+	}
+	if index := c.bestEndpointLocked(-1, false); index >= 0 {
+		return c.endpoints[index].URL
+	}
 	if c.active >= 0 && c.active < len(c.endpoints) && c.endpoints[c.active].Enabled {
 		return c.endpoints[c.active].URL
 	}
@@ -761,7 +869,10 @@ func (c *Client) fallbackBaseURL(current string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	currentIndex := c.endpointIndexLocked(current)
-	next := c.bestEndpointLocked(currentIndex)
+	next := c.bestEndpointLocked(currentIndex, false)
+	if next < 0 {
+		next = c.bestEndpointLocked(currentIndex, true)
+	}
 	if next >= 0 {
 		c.active = next
 		return c.endpoints[next].URL
@@ -778,10 +889,10 @@ func (c *Client) firstEnabledLocked() int {
 	return -1
 }
 
-func (c *Client) bestEndpointLocked(exclude int) int {
+func (c *Client) bestEndpointLocked(exclude int, includeOpen bool) int {
 	best := -1
 	for i, endpoint := range c.endpoints {
-		if i == exclude || !endpoint.Enabled || endpoint.URL == "" {
+		if i == exclude || !endpoint.Enabled || endpoint.URL == "" || (!includeOpen && endpoint.isOpen()) {
 			continue
 		}
 		if best == -1 {
@@ -796,10 +907,7 @@ func (c *Client) bestEndpointLocked(exclude int) int {
 			best = i
 		}
 	}
-	if best >= 0 {
-		return best
-	}
-	return c.firstEnabledLocked()
+	return best
 }
 
 func (c *Client) endpointIndexLocked(baseURL string) int {
@@ -812,10 +920,65 @@ func (c *Client) endpointIndexLocked(baseURL string) int {
 	return -1
 }
 
+func (c *Client) endpointForBaseURL(baseURL string) models.Endpoint {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if index := c.endpointIndexLocked(baseURL); index >= 0 {
+		return c.endpoints[index].Endpoint
+	}
+	return models.Endpoint{URL: strings.TrimRight(strings.TrimSpace(baseURL), "/"), Enabled: true}
+}
+
 func (c *Client) healthIntervalSeconds() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.settings.HealthCheckIntervalSeconds
+}
+
+func (c *Client) healthInterval() time.Duration {
+	interval := time.Duration(c.healthIntervalSeconds()) * time.Second
+	if interval <= 0 {
+		return 5 * time.Second
+	}
+	return interval
+}
+
+func (c *Client) endpointTimeout() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.endpointTimeoutLocked()
+}
+
+func (c *Client) endpointTimeoutLocked() time.Duration {
+	timeout := time.Duration(c.settings.EndpointTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		return 2 * time.Second
+	}
+	return timeout
+}
+
+func (c *Client) signalHealthResetLocked() {
+	select {
+	case c.healthReset <- struct{}{}:
+	default:
+	}
+}
+
+func (e endpointRuntime) isOpen() bool {
+	return e.Failures >= 2
+}
+
+func (e endpointRuntime) circuitState() string {
+	if e.isOpen() {
+		return "open"
+	}
+	if e.Failures > 0 {
+		return "degraded"
+	}
+	if e.Successes == 0 && e.LastOK.IsZero() {
+		return "probing"
+	}
+	return "healthy"
 }
 
 func checkStatus(base baseResponse) error {
