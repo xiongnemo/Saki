@@ -1,5 +1,18 @@
 # TODO
 
+## Endpoint High Availability Improvements
+
+Status: completed.
+
+- [x] Apply endpoint timeout/fallback to real metadata, stream-open, and cover-art requests without cutting off active stream bodies.
+- [x] Add endpoint circuit state, failover reason, and runtime health-check interval updates.
+- [x] Preserve endpoint names and enabled flags through Settings endpoint editing.
+- [x] Store the verified library fingerprint during multi-endpoint Settings save.
+- [x] Namespace audio and cover caches by verified library fingerprint to prevent cross-library cache reuse.
+- [x] Surface active endpoint state and recent failover reason in the System/Playing UI.
+- [x] Add focused regression tests before each implementation step and verify with `go test ./...`.
+- [x] Fix review blocker so fallback-served audio and cover bytes are cached under the serving endpoint namespace.
+
 ## Windows SMTC Release Packaging
 
 Status: completed.

@@ -32,3 +32,6 @@ go.work.sum
 
 # Local archived source
 original/
+
+# Local agent run state
+.omo/
