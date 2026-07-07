@@ -2,6 +2,11 @@ package player
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,29 +35,34 @@ func TestRepeatCycleAndVolumeClamp(t *testing.T) {
 	}
 
 	service.SetVolume(200, false)
-	if backend.volume != 1 {
-		t.Fatalf("expected volume clamped to 1, got %f", backend.volume)
+	if volume := backend.volumeValue(); volume != 1 {
+		t.Fatalf("expected volume clamped to 1, got %f", volume)
 	}
 	service.SetVolume(-200, false)
-	if backend.volume != 0 {
-		t.Fatalf("expected volume clamped to 0, got %f", backend.volume)
+	if volume := backend.volumeValue(); volume != 0 {
+		t.Fatalf("expected volume clamped to 0, got %f", volume)
 	}
 }
 
 func TestMediaCommandPauseAndStop(t *testing.T) {
 	backend := newFakeAudio()
-	backend.playing = true
+	backend.setPlayback(true, false)
 	media := newFakeMedia()
 	service := New(subsonic.NewClient(nil), backend, media)
 	defer service.Close()
 
 	media.push(mediaintegration.CommandPause)
-	eventually(t, func() bool { return backend.paused && media.lastState == models.PlaybackPaused })
+	eventually(t, func() bool {
+		playing, paused := backend.playbackState()
+		return !playing && paused && media.lastPlaybackState() == models.PlaybackPaused
+	})
 
-	backend.playing = true
-	backend.paused = false
+	backend.setPlayback(true, false)
 	media.push(mediaintegration.CommandStop)
-	eventually(t, func() bool { return !backend.playing && !backend.paused && media.lastState == models.PlaybackStopped })
+	eventually(t, func() bool {
+		playing, paused := backend.playbackState()
+		return !playing && !paused && media.lastPlaybackState() == models.PlaybackStopped
+	})
 }
 
 func TestAddToCurrentPlaylistEmitsState(t *testing.T) {
@@ -155,11 +165,60 @@ func TestActiveBackendUsesReporterWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestStateReportsActiveEndpointAndRecentFailoverReason(t *testing.T) {
+	firstServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer firstServer.Close()
+	secondServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writePlayerArtistsResponse(t, w)
+	}))
+	defer secondServer.Close()
+	first := models.Endpoint{Name: "Primary", URL: firstServer.URL, Enabled: true}
+	second := models.Endpoint{Name: "Standby", URL: secondServer.URL, Enabled: true}
+	client := subsonic.NewClient(nil)
+	client.Configure(models.Config{Account: models.Account{Endpoints: []models.Endpoint{first, second}}})
+	_, err := client.GetArtists(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(client, newFakeAudio(), newFakeMedia())
+	defer service.Close()
+
+	state := service.State()
+
+	if state.ActiveEndpoint.URL != second.URL || state.ActiveEndpoint.Name != second.Name {
+		t.Fatalf("active endpoint = %#v, want standby", state.ActiveEndpoint)
+	}
+	if state.EndpointCircuitState != "healthy" {
+		t.Fatalf("active endpoint circuit state = %q, want healthy", state.EndpointCircuitState)
+	}
+	if !strings.Contains(state.EndpointFailoverReason, "getArtists returned HTTP 502") {
+		t.Fatalf("failover reason = %q, want recent failure detail", state.EndpointFailoverReason)
+	}
+}
+
+func writePlayerArtistsResponse(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"subsonic-response": map[string]any{
+			"status": "ok",
+			"artists": map[string]any{
+				"index": []any{map[string]any{
+					"name": "A",
+					"artist": []any{map[string]any{
+						"id": "artist-1", "name": "Artist", "albumCount": 1,
+					}},
+				}},
+			},
+		},
+	})
+}
+
 func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 	backend := newFakeAudio()
-	backend.playing = true
-	backend.seekErr = audio.ErrStreamSeekRequiresCache
-	backend.failSeekOnce = true
+	backend.setPlayback(true, false)
+	backend.setSeekError(audio.ErrStreamSeekRequiresCache, true)
 	service := New(subsonic.NewClient(nil), backend, newFakeMedia())
 	defer service.Close()
 
@@ -174,16 +233,18 @@ func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 
 	service.Seek(30, false)
 
-	if len(backend.loadRequests) != 1 {
-		t.Fatalf("load requests = %d, want 1", len(backend.loadRequests))
+	loadRequests := backend.loadRequestSnapshot()
+	if len(loadRequests) != 1 {
+		t.Fatalf("load requests = %d, want 1", len(loadRequests))
 	}
-	if got := backend.loadRequests[0].URI; got != `C:\cache\song.mp3` {
+	if got := loadRequests[0].URI; got != `C:\cache\song.mp3` {
 		t.Fatalf("reload URI = %q", got)
 	}
-	if backend.position != 30 {
-		t.Fatalf("position = %.1f, want 30", backend.position)
+	if position := backend.positionValue(); position != 30 {
+		t.Fatalf("position = %.1f, want 30", position)
 	}
-	if !backend.playing {
+	playing, _ := backend.playbackState()
+	if !playing {
 		t.Fatal("expected playback to resume after cached seek reload")
 	}
 	state := service.State()
@@ -200,7 +261,7 @@ func TestSeekReloadsCachedSourceAfterStreamingSeekUnavailable(t *testing.T) {
 
 func TestSeekKeepsStreamCacheErrorWhenCachedSourceUnavailable(t *testing.T) {
 	backend := newFakeAudio()
-	backend.seekErr = audio.ErrStreamSeekRequiresCache
+	backend.setSeekError(audio.ErrStreamSeekRequiresCache, false)
 	service := New(subsonic.NewClient(nil), backend, newFakeMedia())
 	defer service.Close()
 
@@ -215,8 +276,8 @@ func TestSeekKeepsStreamCacheErrorWhenCachedSourceUnavailable(t *testing.T) {
 
 	service.Seek(30, false)
 
-	if len(backend.loadRequests) != 0 {
-		t.Fatalf("load requests = %d, want 0", len(backend.loadRequests))
+	if loadRequests := backend.loadRequestSnapshot(); len(loadRequests) != 0 {
+		t.Fatalf("load requests = %d, want 0", len(loadRequests))
 	}
 	if got := service.State().LastError; got != audio.ErrStreamSeekRequiresCache.Error() {
 		t.Fatalf("last error = %q", got)
@@ -224,6 +285,7 @@ func TestSeekKeepsStreamCacheErrorWhenCachedSourceUnavailable(t *testing.T) {
 }
 
 type fakeAudio struct {
+	mu           sync.Mutex
 	events       chan audio.Event
 	playing      bool
 	paused       bool
@@ -240,6 +302,8 @@ func newFakeAudio() *fakeAudio {
 }
 
 func (f *fakeAudio) Load(_ context.Context, request audio.LoadRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.loadRequests = append(f.loadRequests, request)
 	f.playing = false
 	f.paused = true
@@ -247,22 +311,30 @@ func (f *fakeAudio) Load(_ context.Context, request audio.LoadRequest) error {
 	return nil
 }
 func (f *fakeAudio) Play() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.playing = true
 	f.paused = false
 	return nil
 }
 func (f *fakeAudio) Pause() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.playing = false
 	f.paused = true
 	return nil
 }
 func (f *fakeAudio) Stop() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.playing = false
 	f.paused = false
 	f.position = 0
 	return nil
 }
 func (f *fakeAudio) Seek(position float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.seekErr != nil {
 		err := f.seekErr
 		if f.failSeekOnce {
@@ -275,15 +347,71 @@ func (f *fakeAudio) Seek(position float64) error {
 	return nil
 }
 func (f *fakeAudio) SetVolume(volume float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.volume = volume
 	return nil
 }
-func (f *fakeAudio) Position() float64          { return f.position }
-func (f *fakeAudio) Duration() float64          { return f.duration }
-func (f *fakeAudio) IsPlaying() bool            { return f.playing }
-func (f *fakeAudio) IsPaused() bool             { return f.paused }
+func (f *fakeAudio) Position() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.position
+}
+func (f *fakeAudio) Duration() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.duration
+}
+func (f *fakeAudio) IsPlaying() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.playing
+}
+func (f *fakeAudio) IsPaused() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.paused
+}
 func (f *fakeAudio) Events() <-chan audio.Event { return f.events }
 func (f *fakeAudio) Close() error               { return nil }
+
+func (f *fakeAudio) setPlayback(playing bool, paused bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.playing = playing
+	f.paused = paused
+}
+
+func (f *fakeAudio) playbackState() (bool, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.playing, f.paused
+}
+
+func (f *fakeAudio) setSeekError(err error, failOnce bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seekErr = err
+	f.failSeekOnce = failOnce
+}
+
+func (f *fakeAudio) loadRequestSnapshot() []audio.LoadRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]audio.LoadRequest(nil), f.loadRequests...)
+}
+
+func (f *fakeAudio) positionValue() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.position
+}
+
+func (f *fakeAudio) volumeValue() float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.volume
+}
 
 type fakeAudioWithActive struct {
 	*fakeAudio
@@ -295,6 +423,7 @@ func (f *fakeAudioWithActive) ActiveBackend() string {
 }
 
 type fakeMedia struct {
+	mu        sync.Mutex
 	commands  chan mediaintegration.Command
 	lastState models.PlaybackState
 }
@@ -308,6 +437,8 @@ func (f *fakeMedia) UpdateNowPlaying(models.Song) error {
 	return nil
 }
 func (f *fakeMedia) SetPlaybackState(state models.PlaybackState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lastState = state
 	return nil
 }
@@ -322,6 +453,12 @@ func (f *fakeMedia) PollCommand() mediaintegration.Command {
 func (f *fakeMedia) Close() error { return nil }
 func (f *fakeMedia) push(command mediaintegration.Command) {
 	f.commands <- command
+}
+
+func (f *fakeMedia) lastPlaybackState() models.PlaybackState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastState
 }
 
 func eventually(t *testing.T, condition func() bool) {

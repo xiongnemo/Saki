@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/xiongnemo/saki/internal/audio"
+	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
@@ -571,25 +571,25 @@ func (s *Service) cacheCoverArt(ctx context.Context, song models.Song) (string, 
 	cacheRoot := s.cacheRoot
 	s.mu.RUnlock()
 	if cacheRoot == "" {
-		var err error
-		cacheRoot, err = os.UserCacheDir()
-		if err != nil {
-			cacheRoot = os.TempDir()
-		}
-		cacheRoot = filepath.Join(cacheRoot, "saki")
+		cacheRoot = cachepaths.ResolveRoot("")
 	}
-	dir := filepath.Join(cacheRoot, "covers")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, song.CoverArt+".jpg")
+	account := s.client.ActiveAccount()
+	endpoint := s.client.ActiveEndpoint()
+	scope := cachepaths.NewScope(cacheRoot, account.Username, endpoint.URL, account.LibraryFingerprint)
+	path := scope.CoverPath(song.CoverArt)
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
-	data, err := s.client.GetCoverArt(ctx, song.CoverArt)
+	data, endpoint, err := s.client.GetCoverArtWithEndpoint(ctx, song.CoverArt)
 	if err != nil {
 		return "", err
 	}
+	scope = cachepaths.NewScope(cacheRoot, account.Username, endpoint.URL, account.LibraryFingerprint)
+	dir := scope.CoversDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path = scope.CoverPath(song.CoverArt)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", err
 	}
@@ -760,26 +760,56 @@ func (s *Service) stateLocked() models.CurrentState {
 		}
 		audioInfo = audioInfo.WithFallback(track.AudioInfo())
 	}
+	activeEndpoint, circuitState, failoverReason, endpointLastError := currentEndpointState(s.client)
 	return models.CurrentState{
-		CurrentTrack:       current,
-		Position:           s.audio.Position(),
-		Playing:            s.audio.IsPlaying(),
-		Stopped:            !s.audio.IsPlaying() && !s.audio.IsPaused(),
-		Buffering:          s.buffering,
-		BufferedSeconds:    s.bufferedSec,
-		BufferedBytes:      s.bufferedBytes,
-		TotalBytes:         s.totalBytes,
-		BufferedPercent:    s.bufferedPct,
-		BufferPercentKnown: s.bufferPctKnown,
-		CacheReady:         cacheReady,
-		AudioInfo:          audioInfo,
-		LastError:          s.lastError,
-		CurrentPlaylist:    s.playlist,
-		CurrentTrackIndex:  index,
-		RepeatStatus:       s.repeatStatus,
-		Shuffled:           s.shuffled,
-		Volume:             s.volume,
+		CurrentTrack:           current,
+		Position:               s.audio.Position(),
+		Playing:                s.audio.IsPlaying(),
+		Stopped:                !s.audio.IsPlaying() && !s.audio.IsPaused(),
+		Buffering:              s.buffering,
+		BufferedSeconds:        s.bufferedSec,
+		BufferedBytes:          s.bufferedBytes,
+		TotalBytes:             s.totalBytes,
+		BufferedPercent:        s.bufferedPct,
+		BufferPercentKnown:     s.bufferPctKnown,
+		CacheReady:             cacheReady,
+		AudioInfo:              audioInfo,
+		LastError:              s.lastError,
+		ActiveEndpoint:         activeEndpoint,
+		EndpointCircuitState:   circuitState,
+		EndpointFailoverReason: failoverReason,
+		EndpointLastError:      endpointLastError,
+		CurrentPlaylist:        s.playlist,
+		CurrentTrackIndex:      index,
+		RepeatStatus:           s.repeatStatus,
+		Shuffled:               s.shuffled,
+		Volume:                 s.volume,
 	}
+}
+
+func currentEndpointState(client *subsonic.Client) (models.Endpoint, string, string, string) {
+	if client == nil {
+		return models.Endpoint{}, "", "", ""
+	}
+	statuses := client.EndpointStatuses()
+	var active models.Endpoint
+	circuitState := ""
+	failoverReason := ""
+	lastError := ""
+	for _, status := range statuses {
+		if status.Active {
+			active = status.Endpoint
+			circuitState = status.CircuitState
+			lastError = status.LastError
+		}
+		if failoverReason == "" {
+			failoverReason = strings.TrimSpace(status.LastFailoverReason)
+		}
+		if lastError == "" {
+			lastError = strings.TrimSpace(status.LastError)
+		}
+	}
+	return active, circuitState, failoverReason, lastError
 }
 
 func isLocalAudioSource(uri string) bool {
