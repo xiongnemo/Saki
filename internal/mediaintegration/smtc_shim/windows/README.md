@@ -5,7 +5,7 @@ This DLL bridges Go to Windows Runtime `SystemMediaTransportControls`.
 Build from a Developer PowerShell with MSVC and a Windows SDK:
 
 ```pwsh
-cl /std:c++17 /EHsc /DUNICODE /D_UNICODE /LD saki_smtc.cpp /link windowsapp.lib /OUT:saki_smtc.dll
+cl /std:c++17 /EHsc /DUNICODE /D_UNICODE /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /LD saki_smtc.cpp /link windowsapp.lib /OUT:saki_smtc.dll
 ```
 
 Windows Go builds embed the resulting `saki_smtc.dll` into `saki.exe`. At

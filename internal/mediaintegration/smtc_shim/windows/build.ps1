@@ -80,7 +80,7 @@ finally {
     Remove-Item -LiteralPath $probeFile -ErrorAction SilentlyContinue
 }
 
-& cmd.exe /d /s /c "call `"$vcvars`" $Arch && cl /std:c++17 /EHsc /DUNICODE /D_UNICODE /LD saki_smtc.cpp /link windowsapp.lib /OUT:saki_smtc.dll"
+& cmd.exe /d /s /c "call `"$vcvars`" $Arch && cl /std:c++17 /EHsc /DUNICODE /D_UNICODE /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /LD saki_smtc.cpp /link windowsapp.lib /OUT:saki_smtc.dll"
 if ($LASTEXITCODE -ne 0) {
     throw "SMTC shim build failed with exit code $LASTEXITCODE."
 }
