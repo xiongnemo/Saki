@@ -779,18 +779,23 @@ func (p *systemTextPopup) cancelAndClose() {
 }
 
 func (v *settingsView) openEndpointPopup() {
-	original := endpointsToText(v.cfg.Account.Endpoints)
-	v.openInputPopup("Edit Endpoints", "Endpoints (; separated)", original, 72, func(value string) error {
-		v.cfg.Account.Endpoints = parseEndpoints(value)
+	original := cloneEndpoints(v.cfg.Account.Endpoints)
+	originalFingerprint := v.cfg.Account.LibraryFingerprint
+	originalText := endpointsToText(original)
+	v.openInputPopup("Edit Endpoints", "Endpoints (; separated)", originalText, 72, func(value string) error {
+		v.cfg.Account.Endpoints = parseEndpointsWithMetadata(value, original)
+		v.cfg.Account.LibraryFingerprint = ""
 		v.refreshSettingsList()
 		v.startProbeNow("")
 		return nil
 	}, func(value string) {
-		v.cfg.Account.Endpoints = parseEndpoints(value)
+		v.cfg.Account.Endpoints = parseEndpointsWithMetadata(value, original)
+		v.cfg.Account.LibraryFingerprint = ""
 		v.refreshSettingsList()
 		v.startProbeAfterDelay("")
 	}, func() {
-		v.cfg.Account.Endpoints = parseEndpoints(original)
+		v.cfg.Account.Endpoints = cloneEndpoints(original)
+		v.cfg.Account.LibraryFingerprint = originalFingerprint
 		v.refreshSettingsList()
 		v.startProbeNow("")
 	})
@@ -903,13 +908,13 @@ func (v *settingsView) validateAndSave(cfg models.Config, endpoints []models.End
 	ctx, cancel := context.WithTimeout(baseCtx, settingsProbeTimeout)
 	identities := v.app.client.ProbeEndpointIdentities(ctx, endpoints)
 	cancel()
-	err := validateEndpointIdentities(identities)
+	updated, err := configWithVerifiedLibraryFingerprint(cfg, identities)
 	v.queueUpdate(func() {
 		if err != nil {
 			v.setStatusText(v.identityStatusText("Save failed: "+err.Error(), identities))
 			return
 		}
-		v.finishSave(cfg, "Saved")
+		v.finishSave(updated, "Saved")
 	})
 }
 
@@ -931,6 +936,19 @@ func validateEndpointIdentities(identities []subsonic.EndpointIdentity) error {
 		}
 	}
 	return nil
+}
+
+func configWithVerifiedLibraryFingerprint(cfg models.Config, identities []subsonic.EndpointIdentity) (models.Config, error) {
+	if err := validateEndpointIdentities(identities); err != nil {
+		return cfg, err
+	}
+	for _, identity := range identities {
+		if strings.TrimSpace(identity.Fingerprint) != "" {
+			cfg.Account.LibraryFingerprint = identity.Fingerprint
+			break
+		}
+	}
+	return cfg, nil
 }
 
 func (v *settingsView) finishSave(cfg models.Config, message string) {
@@ -1066,6 +1084,7 @@ func (v *settingsView) statusText(message string, endpoints []models.Endpoint, p
 		}
 		return strings.TrimRight(builder.String(), "\n")
 	}
+	statuses := v.endpointStatusesByURL()
 	for _, probe := range probes {
 		if message != "" {
 			builder.WriteString("[::b]")
@@ -1088,9 +1107,44 @@ func (v *settingsView) statusText(message string, endpoints []models.Endpoint, p
 		}
 		builder.WriteByte(' ')
 		builder.WriteString(tview.Escape(probe.Endpoint.URL))
+		if detail := endpointStatusDetail(statuses[normalizedEndpointURL(probe.Endpoint.URL)]); detail != "" {
+			builder.WriteString("  ")
+			builder.WriteString(tview.Escape(detail))
+		}
 		builder.WriteByte('\n')
 	}
 	return strings.TrimRight(builder.String(), "\n")
+}
+
+func (v *settingsView) endpointStatusesByURL() map[string]subsonic.EndpointStatus {
+	if v.app == nil || v.app.client == nil {
+		return nil
+	}
+	statuses := v.app.client.EndpointStatuses()
+	byURL := make(map[string]subsonic.EndpointStatus, len(statuses))
+	for _, status := range statuses {
+		byURL[normalizedEndpointURL(status.Endpoint.URL)] = status
+	}
+	return byURL
+}
+
+func normalizedEndpointURL(value string) string {
+	return strings.ToLower(strings.TrimRight(strings.TrimSpace(value), "/"))
+}
+
+func endpointStatusDetail(status subsonic.EndpointStatus) string {
+	if status.Endpoint.URL == "" {
+		return ""
+	}
+	circuit := strings.TrimSpace(status.CircuitState)
+	if circuit == "" || circuit == "healthy" || circuit == "probing" {
+		return compactEndpointError(status.LastFailoverReason, status.LastError, 0)
+	}
+	detail := "circuit=" + circuit
+	if reason := compactEndpointError(status.LastFailoverReason, status.LastError, 40); reason != "" {
+		detail += " fail=" + reason
+	}
+	return detail
 }
 
 func (v *settingsView) identityStatusText(message string, identities []subsonic.EndpointIdentity) string {
@@ -1153,15 +1207,27 @@ func (v *settingsView) resolvedConfigRows() []kvRow {
 		}
 	}
 	activeEndpoint := "Not connected"
+	endpointStatus := "Unavailable"
+	failoverReason := "None"
 	if v.app != nil && v.app.client != nil {
-		if active := v.app.client.ActiveEndpoint(); active.URL != "" {
-			activeEndpoint = active.URL
+		for _, status := range v.app.client.EndpointStatuses() {
+			if status.Active {
+				activeEndpoint = endpointAboutLabel(status.Endpoint)
+				endpointStatus = endpointCircuitLabel(status.CircuitState)
+			}
+			if failoverReason == "None" {
+				if reason := compactEndpointError(status.LastFailoverReason, status.LastError, 72); reason != "" {
+					failoverReason = reason
+				}
+			}
 		}
 	}
 	return []kvRow{
 		{label: "Config path", value: configPath},
 		{label: "Username", value: fallbackText(v.cfg.Account.Username, "Not configured")},
 		{label: "Active endpoint", value: activeEndpoint},
+		{label: "Endpoint state", value: endpointStatus},
+		{label: "Failover", value: failoverReason},
 		{label: "Endpoints", value: fmt.Sprintf("%d enabled / %d total", len(enabledEndpoints(v.cfg.Account.Endpoints)), len(v.cfg.Account.Endpoints))},
 		{label: "Active backend", value: v.activeAudioBackend()},
 		{label: "MPV path", value: fallbackText(v.cfg.Settings.MPVPath, "PATH lookup")},
@@ -1192,6 +1258,18 @@ func (v *settingsView) activeAudioBackend() string {
 		return "None"
 	}
 	return backendLabel(v.app.player.ActiveBackend())
+}
+
+func endpointAboutLabel(endpoint models.Endpoint) string {
+	url := strings.TrimSpace(endpoint.URL)
+	name := strings.TrimSpace(endpoint.Name)
+	if name != "" && url != "" {
+		return name + " (" + url + ")"
+	}
+	if url != "" {
+		return url
+	}
+	return fallbackText(name, "Not connected")
 }
 
 func backendLabel(backend string) string {

@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -149,6 +148,7 @@ func (a *App) showLogin() {
 	form := tview.NewForm().
 		AddInputField("Endpoints", endpointsText, 72, nil, func(value string) {
 			account.Endpoints = parseEndpoints(value)
+			account.LibraryFingerprint = ""
 		}).
 		AddInputField("Username", account.Username, 48, nil, func(value string) { account.Username = strings.TrimSpace(value) }).
 		AddPasswordField("Password", account.Password, 48, '*', func(value string) { account.Password = value }).
@@ -1583,20 +1583,33 @@ func endpointsToText(endpoints []models.Endpoint) string {
 }
 
 func parseEndpoints(value string) []models.Endpoint {
+	return parseEndpointsWithMetadata(value, nil)
+}
+
+func parseEndpointsWithMetadata(value string, existing []models.Endpoint) []models.Endpoint {
 	fields := strings.FieldsFunc(value, func(r rune) bool {
 		return r == ';' || r == '\n' || r == ','
 	})
+	byURL := make(map[string]models.Endpoint, len(existing))
+	for _, endpoint := range existing {
+		url := strings.TrimRight(strings.TrimSpace(endpoint.URL), "/")
+		if url != "" {
+			endpoint.URL = url
+			byURL[strings.ToLower(url)] = endpoint
+		}
+	}
 	endpoints := make([]models.Endpoint, 0, len(fields))
-	for i, field := range fields {
+	for _, field := range fields {
 		url := strings.TrimRight(strings.TrimSpace(field), "/")
 		if url == "" {
 			continue
 		}
-		endpoints = append(endpoints, models.Endpoint{
-			Name:    "Endpoint " + strconv.Itoa(i+1),
-			URL:     url,
-			Enabled: true,
-		})
+		if endpoint, ok := byURL[strings.ToLower(url)]; ok {
+			endpoint.URL = url
+			endpoints = append(endpoints, endpoint)
+			continue
+		}
+		endpoints = append(endpoints, models.Endpoint{Name: fmt.Sprintf("Endpoint %d", len(endpoints)+1), URL: url, Enabled: true})
 	}
 	return endpoints
 }
