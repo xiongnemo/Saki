@@ -2,7 +2,10 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"image"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
@@ -678,6 +681,72 @@ func TestSystemTextPopupUsesContentAnchorAndMultilineEditor(t *testing.T) {
 	}
 }
 
+func TestEndpointPopupPreservesMetadataForLiveSaveAndCancel(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		cfg: models.Config{Account: models.Account{Endpoints: []models.Endpoint{
+			{Name: "Primary", URL: "https://one.example", Enabled: true},
+			{Name: "Standby", URL: "https://two.example", Enabled: false},
+		}}},
+	}
+	view := newSettingsView(app, app.cfg)
+	app.pages.AddPage("main", view, true, true)
+	view.openEndpointPopup()
+	popup, ok := app.systemPopup.(*systemTextPopup)
+	if !ok {
+		t.Fatalf("system popup = %T, want endpoint text popup", app.systemPopup)
+	}
+
+	if err := popup.accept("https://two.example/; https://three.example"); err != nil {
+		t.Fatalf("endpoint accept failed: %v", err)
+	}
+	if len(view.cfg.Account.Endpoints) != 2 {
+		t.Fatalf("endpoints after live edit = %#v", view.cfg.Account.Endpoints)
+	}
+	if got := view.cfg.Account.Endpoints[0]; got.Name != "Standby" || got.Enabled {
+		t.Fatalf("unchanged endpoint metadata = %#v, want disabled Standby", got)
+	}
+	if got := view.cfg.Account.Endpoints[1]; got.Name != "Endpoint 2" || !got.Enabled {
+		t.Fatalf("new endpoint metadata = %#v, want default enabled Endpoint 2", got)
+	}
+
+	view.openEndpointPopup()
+	popup, ok = app.systemPopup.(*systemTextPopup)
+	if !ok {
+		t.Fatalf("system popup = %T, want endpoint text popup", app.systemPopup)
+	}
+	if err := popup.accept("https://one.example; https://three.example"); err != nil {
+		t.Fatalf("second endpoint accept failed: %v", err)
+	}
+	popup.cancel()
+	if len(view.cfg.Account.Endpoints) != 2 {
+		t.Fatalf("endpoints after cancel = %#v", view.cfg.Account.Endpoints)
+	}
+	if got := view.cfg.Account.Endpoints[0]; got.Name != "Standby" || got.Enabled || got.URL != "https://two.example" {
+		t.Fatalf("cancel restored first endpoint = %#v, want disabled Standby", got)
+	}
+}
+
+func TestParseEndpointsPreservesMetadataForUnchangedURLs(t *testing.T) {
+	existing := []models.Endpoint{
+		{Name: "Primary", URL: "https://one.example", Enabled: true},
+		{Name: "Standby", URL: "https://two.example", Enabled: false},
+	}
+
+	parsed := parseEndpointsWithMetadata("https://two.example/; https://three.example", existing)
+
+	if len(parsed) != 2 {
+		t.Fatalf("parsed endpoints = %#v", parsed)
+	}
+	if got := parsed[0]; got.Name != "Standby" || got.Enabled || got.URL != "https://two.example" {
+		t.Fatalf("preserved endpoint = %#v, want disabled Standby without trailing slash", got)
+	}
+	if got := parsed[1]; got.Name != "Endpoint 2" || !got.Enabled || got.URL != "https://three.example" {
+		t.Fatalf("new endpoint = %#v, want default enabled Endpoint 2", got)
+	}
+}
+
 func TestValidateEndpointIdentitiesRejectsDifferentLibraries(t *testing.T) {
 	err := validateEndpointIdentities([]subsonic.EndpointIdentity{
 		{Endpoint: models.Endpoint{URL: "https://one.example"}, Fingerprint: "one"},
@@ -698,6 +767,83 @@ func TestValidateEndpointIdentitiesRejectsDifferentLibraries(t *testing.T) {
 	}); err == nil || !strings.Contains(err.Error(), "https://one.example") {
 		t.Fatalf("endpoint error validation err = %v", err)
 	}
+}
+
+func TestConfigWithVerifiedLibraryFingerprintStoresSuccessfulValidation(t *testing.T) {
+	cfg := models.Config{Account: models.Account{LibraryFingerprint: "old-library"}}
+
+	updated, err := configWithVerifiedLibraryFingerprint(cfg, []subsonic.EndpointIdentity{
+		{Endpoint: models.Endpoint{URL: "https://one.example"}, Fingerprint: "verified-library"},
+		{Endpoint: models.Endpoint{URL: "https://two.example"}, Fingerprint: "verified-library"},
+	})
+
+	if err != nil {
+		t.Fatalf("validation failed: %v", err)
+	}
+	if updated.Account.LibraryFingerprint != "verified-library" {
+		t.Fatalf("library fingerprint = %q, want verified-library", updated.Account.LibraryFingerprint)
+	}
+}
+
+func TestSettingsSavePersistsVerifiedLibraryFingerprint(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeUIArtistsResponse(t, w, "artist-a")
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeUIArtistsResponse(t, w, "artist-a")
+	}))
+	defer second.Close()
+	client := subsonic.NewClient(first.Client())
+	cfg := models.Config{Account: models.Account{
+		Username:           "nemo",
+		Password:           "secret",
+		LibraryFingerprint: "old-library",
+		Endpoints: []models.Endpoint{
+			{Name: "Primary", URL: first.URL, Enabled: true},
+			{Name: "Standby", URL: second.URL, Enabled: true},
+		},
+	}}
+	client.Configure(cfg)
+	app := &App{
+		client:      client,
+		cfg:         cfg,
+		applyConfig: func(cfg models.Config) models.Config { return cfg },
+	}
+	view := newSettingsView(app, cfg)
+	saved := make(chan models.Config, 1)
+	view.saveConfig = func(cfg models.Config) error {
+		saved <- cfg
+		return nil
+	}
+
+	view.save()
+
+	select {
+	case got := <-saved:
+		if got.Account.LibraryFingerprint == "" || got.Account.LibraryFingerprint == "old-library" {
+			t.Fatalf("saved library fingerprint = %q, want verified fingerprint", got.Account.LibraryFingerprint)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settings save")
+	}
+}
+
+func writeUIArtistsResponse(t *testing.T, w http.ResponseWriter, artistID string) {
+	t.Helper()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"subsonic-response": map[string]any{
+			"status": "ok",
+			"artists": map[string]any{
+				"index": []any{map[string]any{
+					"name": "A",
+					"artist": []any{map[string]any{
+						"id": artistID, "name": "Artist", "albumCount": 1,
+					}},
+				}},
+			},
+		},
+	})
 }
 
 func TestSettingsSaveStaysOnSettingsView(t *testing.T) {
@@ -1592,6 +1738,31 @@ func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
 	}
 	if got := playingLeftText(state, len("Stream Ready  Cached  ALAC")-1); got != "Stream Ready  Cached" {
 		t.Fatalf("narrow playing left text = %q", got)
+	}
+}
+
+func TestCompactEndpointStatusTextFitsNarrowRows(t *testing.T) {
+	state := models.CurrentState{
+		CacheReady: true,
+		ActiveEndpoint: models.Endpoint{
+			Name: "Primary",
+			URL:  "https://one.example",
+		},
+		EndpointCircuitState:   "healthy",
+		EndpointFailoverReason: "dial timeout while probing primary endpoint",
+	}
+
+	if got := endpointStatusLabel(state, 40); got != "EP Primary ok fail: dial timeout whil..." {
+		t.Fatalf("endpoint status label = %q", got)
+	}
+	if got := playingLeftText(state, 100); got != "Stream Ready  Cached  EP Primary ok fail: dial timeout while probing primary endpoint" {
+		t.Fatalf("playing left text with endpoint = %q", got)
+	}
+	if got := nowPlayingStreamAudioLine(state, 52); got != "Stream Ready  Cached  EP Primary ok fail: dial ti..." {
+		t.Fatalf("now playing status = %q", got)
+	}
+	if got := nowPlayingStreamAudioLine(state, 18); got != "Stream Ready  Cached" {
+		t.Fatalf("narrow now playing status = %q", got)
 	}
 }
 

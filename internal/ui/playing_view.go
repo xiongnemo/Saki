@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -158,6 +159,14 @@ func playingLeftSegments(state models.CurrentState, maxWidth int) []textSegment 
 			textSegment{text: label, color: uiAccent},
 		)
 	}
+
+	remaining = maxWidth - segmentsWidth(leftSegments) - 2
+	if label := endpointStatusLabel(state, remaining); label != "" {
+		leftSegments = append(leftSegments,
+			textSegment{text: "  ", color: uiText},
+			textSegment{text: label, color: endpointStatusColor(state.EndpointCircuitState)},
+		)
+	}
 	return leftSegments
 }
 
@@ -286,6 +295,93 @@ func audioBitRateLabel(bitRateKbps int) string {
 		return ""
 	}
 	return fmt.Sprintf("%dk", bitRateKbps)
+}
+
+func endpointStatusLabel(state models.CurrentState, maxWidth int) string {
+	if maxWidth <= 0 || strings.TrimSpace(state.ActiveEndpoint.URL) == "" {
+		return ""
+	}
+	endpoint := endpointDisplayName(state.ActiveEndpoint)
+	circuit := endpointCircuitLabel(state.EndpointCircuitState)
+	base := "EP " + endpoint + " " + circuit
+	reason := compactEndpointError(state.EndpointFailoverReason, state.EndpointLastError, max(0, maxWidth-len(base)-7))
+	if reason != "" {
+		base += " fail: " + reason
+	}
+	if len(base) <= maxWidth {
+		return base
+	}
+	if reason == "" {
+		return compactText(base, maxWidth)
+	}
+	base = "EP " + endpoint + " " + circuit
+	if len(base) <= maxWidth {
+		return base
+	}
+	return ""
+}
+
+func endpointDisplayName(endpoint models.Endpoint) string {
+	if name := strings.TrimSpace(endpoint.Name); name != "" {
+		return name
+	}
+	url := strings.TrimRight(strings.TrimSpace(endpoint.URL), "/")
+	if url == "" {
+		return "endpoint"
+	}
+	if trimmed := strings.Trim(path.Base(url), "/"); trimmed != "" && !strings.Contains(trimmed, ".") {
+		return trimmed
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+}
+
+func endpointCircuitLabel(circuit string) string {
+	switch strings.ToLower(strings.TrimSpace(circuit)) {
+	case "open":
+		return "open"
+	case "degraded":
+		return "degraded"
+	case "probing":
+		return "probe"
+	case "healthy":
+		return "ok"
+	default:
+		return "ok"
+	}
+}
+
+func endpointStatusColor(circuit string) tcell.Color {
+	switch strings.ToLower(strings.TrimSpace(circuit)) {
+	case "open", "degraded":
+		return uiDanger
+	default:
+		return uiAccent
+	}
+}
+
+func compactEndpointError(primary, fallback string, maxWidth int) string {
+	text := strings.TrimSpace(primary)
+	if text == "" {
+		text = strings.TrimSpace(fallback)
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if maxWidth > 0 {
+		return compactText(text, maxWidth)
+	}
+	return text
+}
+
+func compactText(text string, maxWidth int) string {
+	if maxWidth <= 0 || text == "" {
+		return ""
+	}
+	if len(text) <= maxWidth {
+		return text
+	}
+	if maxWidth <= 3 {
+		return text[:maxWidth]
+	}
+	return text[:maxWidth-3] + "..."
 }
 
 func volumeStatusWidth(volume float64) int {
