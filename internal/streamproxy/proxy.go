@@ -2,8 +2,6 @@ package streamproxy
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
 )
@@ -30,20 +29,11 @@ type Proxy struct {
 	server    *http.Server
 	listener  net.Listener
 	baseURL   string
-	cacheDir  string
 	maxBytes  int64
 	ctx       context.Context
 }
 
 func New(client *subsonic.Client, settings models.Settings) *Proxy {
-	cacheDir := settings.CacheDir
-	if cacheDir == "" {
-		if userCache, err := os.UserCacheDir(); err == nil {
-			cacheDir = filepath.Join(userCache, "saki")
-		} else {
-			cacheDir = filepath.Join(os.TempDir(), "saki")
-		}
-	}
 	maxBytes := settings.AudioCacheMaxBytes
 	if maxBytes <= 0 {
 		maxBytes = 2 * 1024 * 1024 * 1024
@@ -53,13 +43,12 @@ func New(client *subsonic.Client, settings models.Settings) *Proxy {
 		settings:  settings,
 		inflight:  make(map[string]*sync.Mutex),
 		cacheJobs: make(map[string]struct{}),
-		cacheDir:  filepath.Join(cacheDir, "audio"),
 		maxBytes:  maxBytes,
 	}
 }
 
 func (p *Proxy) Start(ctx context.Context) error {
-	if err := os.MkdirAll(p.cacheDir, 0o700); err != nil {
+	if err := os.MkdirAll(p.audioDir(), 0o700); err != nil {
 		return err
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -109,9 +98,7 @@ func (p *Proxy) CachedPath(id string) (string, bool) {
 }
 
 func (p *Proxy) EnsureCached(ctx context.Context, id string) (string, error) {
-	cachePath := p.cachePath(id)
-	if fileInfo, err := os.Stat(cachePath); err == nil && fileInfo.Size() > 0 {
-		_ = os.Chtimes(cachePath, time.Now(), time.Now())
+	if cachePath, ok := p.CachedPath(id); ok {
 		return cachePath, nil
 	}
 
@@ -119,15 +106,11 @@ func (p *Proxy) EnsureCached(ctx context.Context, id string) (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	if fileInfo, err := os.Stat(cachePath); err == nil && fileInfo.Size() > 0 {
-		_ = os.Chtimes(cachePath, time.Now(), time.Now())
+	if cachePath, ok := p.CachedPath(id); ok {
 		return cachePath, nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
-		return "", err
-	}
-	resp, err := p.client.OpenStream(ctx, id, "")
+	resp, endpoint, err := p.client.OpenStreamWithEndpoint(ctx, id, "")
 	if err != nil {
 		return "", err
 	}
@@ -135,6 +118,7 @@ func (p *Proxy) EnsureCached(ctx context.Context, id string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("stream upstream returned HTTP %d", resp.StatusCode)
 	}
+	cachePath := p.cachePathForEndpoint(id, endpoint)
 
 	partialPath := cachePath + ".partial"
 	partial, err := os.Create(partialPath)
@@ -160,14 +144,6 @@ func (p *Proxy) EnsureCached(ctx context.Context, id string) (string, error) {
 }
 
 func (p *Proxy) UpdateSettings(settings models.Settings) error {
-	cacheDir := settings.CacheDir
-	if cacheDir == "" {
-		if userCache, err := os.UserCacheDir(); err == nil {
-			cacheDir = filepath.Join(userCache, "saki")
-		} else {
-			cacheDir = filepath.Join(os.TempDir(), "saki")
-		}
-	}
 	maxBytes := settings.AudioCacheMaxBytes
 	if maxBytes <= 0 {
 		maxBytes = 2 * 1024 * 1024 * 1024
@@ -175,11 +151,10 @@ func (p *Proxy) UpdateSettings(settings models.Settings) error {
 
 	p.mu.Lock()
 	p.settings = settings
-	p.cacheDir = filepath.Join(cacheDir, "audio")
 	p.maxBytes = maxBytes
 	p.mu.Unlock()
 
-	return os.MkdirAll(p.cacheDir, 0o700)
+	return os.MkdirAll(p.audioDir(), 0o700)
 }
 
 func (p *Proxy) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +177,7 @@ func (p *Proxy) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p.proxyAndCache(w, r, id, cachePath)
+	p.proxyAndCache(w, r, id)
 }
 
 func (p *Proxy) proxyRange(w http.ResponseWriter, r *http.Request, id string, rangeHeader string) {
@@ -247,22 +222,23 @@ func (p *Proxy) ensureCachedAsync(id string) {
 	}()
 }
 
-func (p *Proxy) proxyAndCache(w http.ResponseWriter, r *http.Request, id string, cachePath string) {
+func (p *Proxy) proxyAndCache(w http.ResponseWriter, r *http.Request, id string) {
 	lock := p.lockFor(id)
 	lock.Lock()
 	defer lock.Unlock()
 
-	if fileInfo, err := os.Stat(cachePath); err == nil && fileInfo.Size() > 0 {
+	if cachePath, ok := p.CachedPath(id); ok {
 		http.ServeFile(w, r, cachePath)
 		return
 	}
 
-	resp, err := p.client.OpenStream(r.Context(), id, "")
+	resp, endpoint, err := p.client.OpenStreamWithEndpoint(r.Context(), id, "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	cachePath := p.cachePathForEndpoint(id, endpoint)
 
 	partialPath := cachePath + ".partial"
 	partial, err := os.Create(partialPath)
@@ -298,33 +274,60 @@ func (p *Proxy) lockFor(id string) *sync.Mutex {
 }
 
 func (p *Proxy) cachePath(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return filepath.Join(p.cacheDir, hex.EncodeToString(sum[:])+".audio")
+	path := p.cacheScope().AudioPath(id)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	return path
+}
+
+func (p *Proxy) cachePathForEndpoint(id string, endpoint models.Endpoint) string {
+	path := p.cacheScopeForEndpoint(endpoint).AudioPath(id)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	return path
+}
+
+func (p *Proxy) audioDir() string {
+	return p.cacheScope().AudioDir()
+}
+
+func (p *Proxy) cacheScope() cachepaths.Scope {
+	p.mu.Lock()
+	root := p.settings.CacheDir
+	p.mu.Unlock()
+	return cacheScope(p.client, root)
+}
+
+func (p *Proxy) cacheScopeForEndpoint(endpoint models.Endpoint) cachepaths.Scope {
+	p.mu.Lock()
+	root := p.settings.CacheDir
+	p.mu.Unlock()
+	return cacheScopeForEndpoint(p.client, root, endpoint)
+}
+
+func cacheScope(client *subsonic.Client, root string) cachepaths.Scope {
+	if client == nil {
+		return cachepaths.NewScope(root, "", "", "")
+	}
+	account := client.ActiveAccount()
+	endpoint := client.ActiveEndpoint()
+	return cachepaths.NewScope(root, account.Username, endpoint.URL, account.LibraryFingerprint)
+}
+
+func cacheScopeForEndpoint(client *subsonic.Client, root string, endpoint models.Endpoint) cachepaths.Scope {
+	if client == nil {
+		return cachepaths.NewScope(root, "", endpoint.URL, "")
+	}
+	account := client.ActiveAccount()
+	return cachepaths.NewScope(root, account.Username, endpoint.URL, account.LibraryFingerprint)
 }
 
 func (p *Proxy) prune() error {
-	entries, err := os.ReadDir(p.cacheDir)
+	files, err := cachedAudioFiles(p.cacheScope().AudioRoot())
 	if err != nil {
 		return err
 	}
-	type file struct {
-		path    string
-		size    int64
-		modTime time.Time
-	}
-	var files []file
 	var total int64
-	for _, entry := range entries {
-		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".partial") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		path := filepath.Join(p.cacheDir, entry.Name())
-		files = append(files, file{path: path, size: info.Size(), modTime: info.ModTime()})
-		total += info.Size()
+	for _, file := range files {
+		total += file.size
 	}
 	if total <= p.maxBytes {
 		return nil
@@ -344,6 +347,31 @@ func (p *Proxy) prune() error {
 		}
 	}
 	return nil
+}
+
+type cacheFile struct {
+	path    string
+	size    int64
+	modTime time.Time
+}
+
+func cachedAudioFiles(root string) ([]cacheFile, error) {
+	var files []cacheFile
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".partial") {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		files = append(files, cacheFile{path: path, size: info.Size(), modTime: info.ModTime()})
+		return nil
+	})
+	return files, err
 }
 
 func copyHeaders(dst, src http.Header) {

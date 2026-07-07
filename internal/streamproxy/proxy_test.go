@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
 )
@@ -51,11 +52,107 @@ func TestProxyStreamsAndCommitsCompletedCache(t *testing.T) {
 	}
 }
 
+func TestProxyStreamsFallbackUnderServingEndpointNamespace(t *testing.T) {
+	// Given
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/stream" {
+			t.Fatalf("unexpected upstream path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte("fallback-audio"))
+	}))
+	defer fallback.Close()
+	cacheDir := t.TempDir()
+	client := subsonic.NewClient(primary.Client())
+	client.Configure(configForEndpointPair(primary.URL, fallback.URL, cacheDir))
+	proxy := New(client, models.Settings{CacheDir: cacheDir, AudioCacheMaxBytes: 1024 * 1024})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := proxy.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close(context.Background())
+
+	// When
+	resp, err := http.Get(proxy.TrackURL("song-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Then
+	if string(body) != "fallback-audio" {
+		t.Fatalf("unexpected body %q", body)
+	}
+	primaryPath := cachepaths.NewScope(cacheDir, "nemo", primary.URL, "").AudioPath("song-1")
+	fallbackPath := cachepaths.NewScope(cacheDir, "nemo", fallback.URL, "").AudioPath("song-1")
+	data, err := os.ReadFile(fallbackPath)
+	if err != nil {
+		t.Fatalf("expected fallback namespace cache file: %v", err)
+	}
+	if string(data) != "fallback-audio" {
+		t.Fatalf("fallback cache body = %q, want fallback-audio", data)
+	}
+	if _, err := os.Stat(primaryPath); !os.IsNotExist(err) {
+		t.Fatalf("primary namespace should not contain fallback bytes, stat err=%v", err)
+	}
+}
+
+func TestEnsureCachedFallbackUnderServingEndpointNamespace(t *testing.T) {
+	// Given
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/stream" {
+			t.Fatalf("unexpected upstream path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte("fallback-audio"))
+	}))
+	defer fallback.Close()
+	cacheDir := t.TempDir()
+	client := subsonic.NewClient(primary.Client())
+	client.Configure(configForEndpointPair(primary.URL, fallback.URL, cacheDir))
+	proxy := New(client, models.Settings{CacheDir: cacheDir, AudioCacheMaxBytes: 1024 * 1024})
+	primaryPath := cachepaths.NewScope(cacheDir, "nemo", primary.URL, "").AudioPath("song-1")
+	fallbackPath := cachepaths.NewScope(cacheDir, "nemo", fallback.URL, "").AudioPath("song-1")
+
+	// When
+	path, err := proxy.EnsureCached(context.Background(), "song-1")
+
+	// Then
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != fallbackPath {
+		t.Fatalf("cache path = %s, want fallback path %s", path, fallbackPath)
+	}
+	data, err := os.ReadFile(fallbackPath)
+	if err != nil {
+		t.Fatalf("expected fallback namespace cache file: %v", err)
+	}
+	if string(data) != "fallback-audio" {
+		t.Fatalf("fallback cache body = %q, want fallback-audio", data)
+	}
+	if _, err := os.Stat(primaryPath); !os.IsNotExist(err) {
+		t.Fatalf("primary namespace should not contain fallback bytes, stat err=%v", err)
+	}
+}
+
 func TestProxyServesRangeFromCompletedCache(t *testing.T) {
 	cacheDir := t.TempDir()
 	proxy := New(subsonic.NewClient(nil), models.Settings{CacheDir: filepath.Dir(cacheDir), AudioCacheMaxBytes: 1024 * 1024})
-	proxy.cacheDir = cacheDir
-	if err := os.MkdirAll(proxy.cacheDir, 0o700); err != nil {
+	proxy.settings.CacheDir = filepath.Dir(cacheDir)
+	audioDir := proxy.audioDir()
+	if err := os.MkdirAll(audioDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(proxy.cachePath("song-1"), []byte("0123456789"), 0o600); err != nil {
@@ -154,11 +251,12 @@ func TestProxyCachesFullFileDuringRangePlayback(t *testing.T) {
 
 func TestProxyPrunesLeastRecentlyUsedFiles(t *testing.T) {
 	proxy := New(subsonic.NewClient(nil), models.Settings{CacheDir: t.TempDir(), AudioCacheMaxBytes: 5})
-	if err := os.MkdirAll(proxy.cacheDir, 0o700); err != nil {
+	audioDir := proxy.audioDir()
+	if err := os.MkdirAll(audioDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	oldPath := filepath.Join(proxy.cacheDir, "old.audio")
-	newPath := filepath.Join(proxy.cacheDir, "new.audio")
+	oldPath := filepath.Join(audioDir, "old.audio")
+	newPath := filepath.Join(audioDir, "new.audio")
 	if err := os.WriteFile(oldPath, []byte("12345"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -202,4 +300,10 @@ func configForEndpoint(rawURL string, cacheDir string) models.Config {
 			EndpointSwitchThreshold:    0.30,
 		},
 	}
+}
+
+func configForEndpointPair(primaryURL string, fallbackURL string, cacheDir string) models.Config {
+	cfg := configForEndpoint(primaryURL, cacheDir)
+	cfg.Account.Endpoints = append(cfg.Account.Endpoints, models.Endpoint{Name: "Fallback", URL: fallbackURL, Enabled: true})
+	return cfg
 }
