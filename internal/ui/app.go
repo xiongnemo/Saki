@@ -38,7 +38,7 @@ var (
 const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
-	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | / Filter | 6 System"
+	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | 6 System | ? Help | : Commands | / Filter"
 	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | a Add | r Repeat | s Shuffle | -/= Vol 5% | [/] Vol 1% | ,/. Seek | q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
@@ -85,6 +85,8 @@ type App struct {
 	lastClickAt        time.Time
 	systemPopup        tview.Primitive
 	systemPopupCancel  func()
+	helpOverlay        *helpOverlay
+	commandPalette     *commandPalette
 
 	historyMu sync.Mutex
 	history   []func()
@@ -267,6 +269,14 @@ func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
 			}
 			return nil
 		}
+	}
+
+	if a.handleOpenOverlayKey(event) {
+		return nil
+	}
+
+	if a.handleOverlayTrigger(event) {
+		return nil
 	}
 
 	if a.hasNowPlayingOverlay() {
@@ -562,6 +572,9 @@ func (a *App) handleMouseCapture(event *tcell.EventMouse, action tview.MouseActi
 			}
 		}
 		return nil, action
+	}
+	if handled, nextEvent := a.handleOverlayMouse(event, action); handled {
+		return nextEvent, action
 	}
 	if a.hasNowPlayingOverlay() {
 		if preservesMouseClickSynthesis(action) {
