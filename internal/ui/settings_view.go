@@ -14,6 +14,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/rivo/uniseg"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
 	"github.com/xiongnemo/saki/internal/version"
@@ -315,17 +316,35 @@ func drawStyledText(screen tcell.Screen, x, y, width int, text string, style tce
 	if width <= 0 {
 		return
 	}
+	fillLine(screen, x, y, width, style)
+
 	col := 0
-	for _, r := range text {
-		if col >= width {
+	state := -1
+	for len(text) > 0 {
+		cluster, rest, clusterWidth, nextState := uniseg.FirstGraphemeClusterInString(text, state)
+		if cluster == "" {
 			break
 		}
-		screen.SetContent(x+col, y, r, nil, style)
-		col++
-	}
-	for col < width {
-		screen.SetContent(x+col, y, ' ', nil, style)
-		col++
+		if clusterWidth <= 0 {
+			text = rest
+			state = nextState
+			continue
+		}
+		if col+clusterWidth > width {
+			break
+		}
+
+		runes := []rune(cluster)
+		for offset := clusterWidth - 1; offset >= 0; offset-- {
+			if offset == 0 {
+				screen.SetContent(x+col, y, runes[0], runes[1:], style)
+			} else {
+				screen.SetContent(x+col+offset, y, ' ', nil, style)
+			}
+		}
+		col += clusterWidth
+		text = rest
+		state = nextState
 	}
 }
 
