@@ -1,5 +1,15 @@
 # TODO
 
+## Help Overlay and Command Palette
+
+Status: completed.
+
+- [x] Add a modal Help Overlay opened by half-width `?` and full-width `？` when text input is not focused.
+- [x] Add a searchable Command Palette opened by half-width `:` and full-width `：` when text input is not focused.
+- [x] Introduce a small UI action registry for shared shortcut metadata, Help content, and palette actions.
+- [x] Keep existing raw TTY shortcuts, text input behavior, System popups, filter input, and Now Playing controls working.
+- [x] Update shortcut documentation and verify with focused UI tests plus `go test ./...`.
+
 ## Windows SMTC MSVC 19.51 Compatibility
 
 Status: completed.

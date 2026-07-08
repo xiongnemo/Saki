@@ -24,7 +24,8 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Queue navigation with keyboard focus, mouse selection, and double-click playback.
 - Queue-side album cover preview with terminal image protocol support and color-block fallback.
 - Now Playing panel with progress, stream/cache state, audio format details, repeat, shuffle, volume controls, and a non-wrapping Controls help bar.
-- Fullscreen Now Playing overlay via `Ctrl+O` with auto-selected cover layouts, scrolling metadata, progress, status, and two-row clickable playback controls.
+- Help overlay via `?` / `？` and searchable Command Palette via `:` / `：` for global navigation, playback, system, and quit actions.
+- Fullscreen Now Playing overlay via `5` with auto-selected cover layouts, scrolling metadata, progress, status, and two-row clickable playback controls.
 - Multiple playback backends: default `auto` tries miniaudio first for MP3/WAV/FLAC and Range-capable or completed-cache ALAC/M4A, then falls back to optional `mpv` for unsupported sources.
 - Local stream proxy with playback-time buffering and completed-file audio cache.
 - Seeking support when the current backend/source can provide a seekable stream or cached file.
@@ -83,7 +84,8 @@ go run ./cmd/saki --version
 
 For local playback, install `mpv` so `mpv.exe` is on `PATH`, or set the full
 `mpv.exe` path in the System page if you want to use the optional mpv
-backend. System is available from the main screen with `Ctrl+S`.
+backend. System is available from the main screen with `6` or the Command
+Palette.
 
 ## Build On Windows
 
