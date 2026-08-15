@@ -164,7 +164,7 @@ func playingLeftSegments(state models.CurrentState, maxWidth int) []textSegment 
 	if label := endpointStatusLabel(state, remaining); label != "" {
 		leftSegments = append(leftSegments,
 			textSegment{text: "  ", color: uiText},
-			textSegment{text: label, color: endpointStatusColor(state.EndpointCircuitState)},
+			textSegment{text: label, color: uiAccent},
 		)
 	}
 	return leftSegments
@@ -301,24 +301,7 @@ func endpointStatusLabel(state models.CurrentState, maxWidth int) string {
 	if maxWidth <= 0 || strings.TrimSpace(state.ActiveEndpoint.URL) == "" {
 		return ""
 	}
-	endpoint := endpointDisplayName(state.ActiveEndpoint)
-	circuit := endpointCircuitLabel(state.EndpointCircuitState)
-	base := "EP " + endpoint + " " + circuit
-	reason := compactEndpointError(state.EndpointFailoverReason, state.EndpointLastError, max(0, maxWidth-len(base)-7))
-	if reason != "" {
-		base += " fail: " + reason
-	}
-	if len(base) <= maxWidth {
-		return base
-	}
-	if reason == "" {
-		return compactText(base, maxWidth)
-	}
-	base = "EP " + endpoint + " " + circuit
-	if len(base) <= maxWidth {
-		return base
-	}
-	return ""
+	return compactText("Endpoint: "+endpointDisplayName(state.ActiveEndpoint), maxWidth)
 }
 
 func endpointDisplayName(endpoint models.Endpoint) string {
@@ -347,15 +330,6 @@ func endpointCircuitLabel(circuit string) string {
 		return "ok"
 	default:
 		return "ok"
-	}
-}
-
-func endpointStatusColor(circuit string) tcell.Color {
-	switch strings.ToLower(strings.TrimSpace(circuit)) {
-	case "open", "degraded":
-		return uiDanger
-	default:
-		return uiAccent
 	}
 }
 

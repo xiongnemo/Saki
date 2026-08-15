@@ -1741,7 +1741,7 @@ func TestPlayingLeftTextIncludesAudioInfo(t *testing.T) {
 	}
 }
 
-func TestCompactEndpointStatusTextFitsNarrowRows(t *testing.T) {
+func TestEndpointStatusTextShowsOnlyActiveEndpoint(t *testing.T) {
 	state := models.CurrentState{
 		CacheReady: true,
 		ActiveEndpoint: models.Endpoint{
@@ -1750,19 +1750,23 @@ func TestCompactEndpointStatusTextFitsNarrowRows(t *testing.T) {
 		},
 		EndpointCircuitState:   "healthy",
 		EndpointFailoverReason: "dial timeout while probing primary endpoint",
+		EndpointLastError:      "connection refused",
 	}
 
-	if got := endpointStatusLabel(state, 40); got != "EP Primary ok fail: dial timeout whil..." {
+	if got := endpointStatusLabel(state, 40); got != "Endpoint: Primary" {
 		t.Fatalf("endpoint status label = %q", got)
 	}
-	if got := playingLeftText(state, 100); got != "Stream Ready  Cached  EP Primary ok fail: dial timeout while probing primary endpoint" {
+	if got := playingLeftText(state, 100); got != "Stream Ready  Cached  Endpoint: Primary" {
 		t.Fatalf("playing left text with endpoint = %q", got)
 	}
-	if got := nowPlayingStreamAudioLine(state, 52); got != "Stream Ready  Cached  EP Primary ok fail: dial ti..." {
+	if got := nowPlayingStreamAudioLine(state, 52); got != "Stream Ready  Cached  Endpoint: Primary" {
 		t.Fatalf("now playing status = %q", got)
 	}
 	if got := nowPlayingStreamAudioLine(state, 18); got != "Stream Ready  Cached" {
 		t.Fatalf("narrow now playing status = %q", got)
+	}
+	if got := endpointStatusLabel(models.CurrentState{ActiveEndpoint: state.ActiveEndpoint}, 40); got != "Endpoint: Primary" {
+		t.Fatalf("endpoint status after recovery = %q", got)
 	}
 }
 
