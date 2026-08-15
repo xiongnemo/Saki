@@ -82,6 +82,22 @@ Print the build version without starting the TUI:
 go run ./cmd/saki --version
 ```
 
+Install a built Saki binary under the per-user command directory:
+
+```text
+saki install
+saki install --dir <directory> --yes
+```
+
+The default directory is `~/.local/bin` on every platform. The installed
+executable is always named `saki` on Unix-like systems and `saki.exe` on
+Windows. The command previews the source, destination, and PATH status, asks
+before creating a missing directory or replacing different contents, and is
+content-idempotent. It only prints PATH or shell hints; it never edits PATH,
+shell profiles, or registry settings. `go run ./cmd/saki install` installs the
+temporary executable produced by `go run`, so use a release or locally built
+binary for normal installation.
+
 For local playback, install `mpv` so `mpv.exe` is on `PATH`, or set the full
 `mpv.exe` path in the System page if you want to use the optional mpv
 backend. System is available from the main screen with `6` or the Command

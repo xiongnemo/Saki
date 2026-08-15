@@ -11,19 +11,19 @@ Status: completed.
 
 ## Self-Install Command
 
-Status: in progress.
+Status: completed.
 
-Current closeout pass:
+Completion pass:
 
-- [x] Verify and close the implemented CLI dispatcher without wiring it into `main` yet.
+- [x] Verify and close the implemented CLI dispatcher and its `main` process boundary.
 - [x] Complete and verify the source/target/runtime path primitives before starting filesystem mutation behavior.
-- Leave copy/rollback, PATH diagnostics, process integration, and user documentation for the next implementation waves.
+- [x] Complete copy/rollback, PATH diagnostics, process integration, and user documentation.
 
-- [ ] Add standard-library CLI routing for the install command and strict positional argument handling.
-- [ ] Implement canonical self-copy behavior with safe, rollback-aware replacement.
-- [ ] Add non-mutating, executable-aware PATH reachability and shadowing diagnostics.
-- [ ] Cover installer behavior with temporary-directory unit tests and CLI subprocess tests.
-- [ ] Document the install command in README and run the full verification suite.
+- [x] Add standard-library CLI routing for the install command and strict positional argument handling.
+- [x] Implement canonical self-copy behavior with safe, rollback-aware replacement.
+- [x] Add non-mutating, executable-aware PATH reachability and shadowing diagnostics.
+- [x] Cover installer behavior with temporary-directory unit tests and CLI subprocess tests.
+- [x] Document the install command in README and run the full verification suite.
 
 ## Help Overlay and Command Palette
 

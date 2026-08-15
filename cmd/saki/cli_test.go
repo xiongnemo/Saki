@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,6 +36,73 @@ func TestCLI_CurrentMainVersion_whenVersionFlagProvided(t *testing.T) {
 	if got, want := stdout.String(), version.String()+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
+}
+
+func TestCLIProcess_unknownCommandExitsTwo(t *testing.T) {
+	binary := buildCLIBinary(t)
+	command := exec.Command(binary, "unknown")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+
+	err := command.Run()
+	if err == nil || command.ProcessState.ExitCode() != 2 {
+		t.Fatalf("unknown command error=%v exit=%d stdout=%q stderr=%q", err, command.ProcessState.ExitCode(), stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "unexpected argument") {
+		t.Fatalf("unknown command output stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestCLIProcess_installAndInstalledVersion(t *testing.T) {
+	binary := buildCLIBinary(t)
+	directory := t.TempDir()
+	command := exec.Command(binary, "install", "--dir", directory, "--yes")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("install command: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	leaf := "saki"
+	if runtime.GOOS == "windows" {
+		leaf = "saki.exe"
+	}
+	installed := filepath.Join(directory, leaf)
+	if _, err := os.Stat(installed); err != nil {
+		t.Fatalf("installed target %q: %v", installed, err)
+	}
+	sourceVersion, err := exec.Command(binary, "--version").Output()
+	if err != nil {
+		t.Fatalf("source --version: %v", err)
+	}
+	versionCommand := exec.Command(installed, "--version")
+	versionOutput, err := versionCommand.Output()
+	if err != nil {
+		t.Fatalf("installed --version: %v", err)
+	}
+	if got, want := string(versionOutput), string(sourceVersion); got != want {
+		t.Fatalf("installed version = %q, want source version %q", got, want)
+	}
+}
+
+func buildCLIBinary(t *testing.T) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "saki-cli-test")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	command := exec.Command("go", "build", "-o", binary, ".")
+	command.Env = append(os.Environ(), "GOPROXY=https://goproxy.cn,direct")
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Run(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, output.String())
+	}
+	return binary
 }
 
 type callbackFailures struct {

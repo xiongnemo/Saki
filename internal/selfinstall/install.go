@@ -21,16 +21,22 @@ type Options struct {
 
 // Runtime contains process and filesystem dependencies used by the installer.
 type Runtime struct {
-	GOOS         string
-	Executable   func() (string, error)
-	UserHomeDir  func() (string, error)
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
-	Getenv       func(string) string
-	Lstat        func(string) (fs.FileInfo, error)
-	EvalSymlinks func(string) (string, error)
-	Rename       func(string, string) error
+	GOOS          string
+	PathSeparator string
+	Executable    func() (string, error)
+	UserHomeDir   func() (string, error)
+	Stdin         io.Reader
+	Stdout        io.Writer
+	Stderr        io.Writer
+	Getenv        func(string) string
+	Lstat         func(string) (fs.FileInfo, error)
+	EvalSymlinks  func(string) (string, error)
+	Rename        func(string, string) error
+	Open          func(string) (*os.File, error)
+	OpenFile      func(string, int, fs.FileMode) (*os.File, error)
+	MkdirAll      func(string, fs.FileMode) error
+	Remove        func(string) error
+	Chmod         func(string, fs.FileMode) error
 }
 
 // Paths identifies the validated source and canonical install destination.
@@ -55,16 +61,22 @@ func DefaultOptions() Options {
 // SystemRuntime returns dependencies backed by the current process and OS.
 func SystemRuntime() Runtime {
 	return Runtime{
-		GOOS:         goruntime.GOOS,
-		Executable:   os.Executable,
-		UserHomeDir:  os.UserHomeDir,
-		Stdin:        os.Stdin,
-		Stdout:       os.Stdout,
-		Stderr:       os.Stderr,
-		Getenv:       os.Getenv,
-		Lstat:        os.Lstat,
-		EvalSymlinks: filepath.EvalSymlinks,
-		Rename:       os.Rename,
+		GOOS:          goruntime.GOOS,
+		PathSeparator: string(filepath.ListSeparator),
+		Executable:    os.Executable,
+		UserHomeDir:   os.UserHomeDir,
+		Stdin:         os.Stdin,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		Getenv:        os.Getenv,
+		Lstat:         os.Lstat,
+		EvalSymlinks:  filepath.EvalSymlinks,
+		Rename:        os.Rename,
+		Open:          os.Open,
+		OpenFile:      os.OpenFile,
+		MkdirAll:      os.MkdirAll,
+		Remove:        os.Remove,
+		Chmod:         os.Chmod,
 	}
 }
 
@@ -123,6 +135,16 @@ func validateRuntime(runtime Runtime) error {
 		missing = "EvalSymlinks"
 	case runtime.Rename == nil:
 		missing = "Rename"
+	case runtime.Open == nil:
+		missing = "Open"
+	case runtime.OpenFile == nil:
+		missing = "OpenFile"
+	case runtime.MkdirAll == nil:
+		missing = "MkdirAll"
+	case runtime.Remove == nil:
+		missing = "Remove"
+	case runtime.Chmod == nil:
+		missing = "Chmod"
 	}
 	if missing != "" {
 		return fmt.Errorf("%s is required", missing)

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/player"
+	"github.com/xiongnemo/saki/internal/selfinstall"
 	"github.com/xiongnemo/saki/internal/streamproxy"
 	"github.com/xiongnemo/saki/internal/subsonic"
 	"github.com/xiongnemo/saki/internal/ui"
@@ -20,13 +20,33 @@ import (
 )
 
 func main() {
-	showVersion := flag.Bool("version", false, "print version and exit")
-	shortVersion := flag.Bool("v", false, "print version and exit")
-	flag.Parse()
-	if *showVersion || *shortVersion {
-		fmt.Fprintln(os.Stdout, version.String())
-		return
+	os.Exit(runCLIProcess(os.Args[1:]))
+}
+
+func runCLIProcess(args []string) int {
+	runtime := commandRuntime{
+		stdin:   os.Stdin,
+		stdout:  os.Stdout,
+		stderr:  os.Stderr,
+		version: version.String(),
+		runTUI:  runTUI,
+		install: runInstall,
 	}
+	return runCLI(args, runtime)
+}
+
+func runInstall(options installOptions) error {
+	installer, err := selfinstall.New(selfinstall.Options{
+		Directory: options.directory,
+		AssumeYes: options.yes,
+	}, selfinstall.SystemRuntime())
+	if err != nil {
+		return err
+	}
+	return installer.Install()
+}
+
+func runTUI() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -34,7 +54,7 @@ func main() {
 	cfgStore := config.NewStore("Saki", "config.json")
 	cfg, err := cfgStore.Load()
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	client := subsonic.NewClient(nil)
@@ -43,7 +63,7 @@ func main() {
 
 	proxy := streamproxy.New(client, cfg.Settings)
 	if err := proxy.Start(ctx); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("start stream proxy: %w", err)
 	}
 	defer proxy.Close(context.Background())
 
@@ -84,8 +104,9 @@ func main() {
 
 	app := ui.New(ctx, cancel, cfgStore, cfg, client, musicPlayer, media, applyConfig)
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("run TUI: %w", err)
 	}
+	return nil
 }
 
 func normalizeAudioBackend(value string) string {
