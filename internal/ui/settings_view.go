@@ -128,7 +128,7 @@ func newSettingsView(app *App, cfg models.Config) *settingsView {
 func (v *settingsView) refreshSettingsList() {
 	current := v.selectedRow
 	v.settingsRows = v.settingsRows[:0]
-	v.settingsRows = append(v.settingsRows, settingRow{label: "Endpoints (; separated)", value: endpointsToText(v.cfg.Account.Endpoints), action: func() {
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Endpoints", value: endpointSummary(v.cfg.Account.Endpoints), action: func() {
 		v.openEndpointPopup()
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Audio backend", value: fallbackText(v.settings.AudioBackend, "auto"), action: func() {
@@ -798,26 +798,14 @@ func (p *systemTextPopup) cancelAndClose() {
 }
 
 func (v *settingsView) openEndpointPopup() {
-	original := cloneEndpoints(v.cfg.Account.Endpoints)
-	originalFingerprint := v.cfg.Account.LibraryFingerprint
-	originalText := endpointsToText(original)
-	v.openInputPopup("Edit Endpoints", "Endpoints (; separated)", originalText, 72, func(value string) error {
-		v.cfg.Account.Endpoints = parseEndpointsWithMetadata(value, original)
+	editor := newEndpointEditor(v.app, v.cfg.Account.Endpoints, v.popupAnchor(), func(endpoints []models.Endpoint) error {
+		v.cfg.Account.Endpoints = cloneEndpoints(endpoints)
 		v.cfg.Account.LibraryFingerprint = ""
 		v.refreshSettingsList()
 		v.startProbeNow("")
 		return nil
-	}, func(value string) {
-		v.cfg.Account.Endpoints = parseEndpointsWithMetadata(value, original)
-		v.cfg.Account.LibraryFingerprint = ""
-		v.refreshSettingsList()
-		v.startProbeAfterDelay("")
-	}, func() {
-		v.cfg.Account.Endpoints = cloneEndpoints(original)
-		v.cfg.Account.LibraryFingerprint = originalFingerprint
-		v.refreshSettingsList()
-		v.startProbeNow("")
-	})
+	}, v.closePopup)
+	v.showPopup(editor, nil)
 }
 
 func (v *settingsView) openTextPopup(label, value string, accept func(string) error) {

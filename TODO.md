@@ -1,5 +1,14 @@
 # TODO
 
+## Named Endpoint Editor
+
+Status: completed.
+
+- [x] Replace the semicolon-only endpoint editor with a named Endpoint list editor.
+- [x] Support per-Endpoint name, URL, enabled state, add/delete, and priority reordering.
+- [x] Preserve legacy unnamed endpoints and validate edited Endpoint values before save.
+- [x] Verify playback labels, endpoint metadata round-trips, and Settings UI regressions.
+
 ## Self-Install Command
 
 Status: in progress.

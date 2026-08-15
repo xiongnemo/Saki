@@ -466,8 +466,8 @@ func TestSettingsRowsAlignLabelsAndUseThemeColor(t *testing.T) {
 
 	valueX := view.settingsListRect.x + settingLabelWidth(view.settingsRows, view.settingsListRect.width)
 	ch, _, _, _ = screen.GetContent(valueX, labelY)
-	if ch != 'h' {
-		t.Fatalf("first value starts at x=%d with %q, want h", valueX, ch)
+	if ch != 'm' {
+		t.Fatalf("first value starts at x=%d with %q, want m", valueX, ch)
 	}
 }
 
@@ -642,7 +642,7 @@ func TestSystemTextPopupEscapeClosesItself(t *testing.T) {
 	}
 }
 
-func TestSystemTextPopupUsesContentAnchorAndMultilineEditor(t *testing.T) {
+func TestEndpointEditorUsesContentAnchorAndListEditor(t *testing.T) {
 	app := &App{
 		app:   tview.NewApplication(),
 		pages: tview.NewPages(),
@@ -663,25 +663,25 @@ func TestSystemTextPopupUsesContentAnchorAndMultilineEditor(t *testing.T) {
 	view.Draw(screen)
 	view.openEndpointPopup()
 
-	popup, ok := app.systemPopup.(*systemTextPopup)
+	popup, ok := app.systemPopup.(*endpointEditor)
 	if !ok {
-		t.Fatalf("system popup = %T, want text popup", app.systemPopup)
+		t.Fatalf("system popup = %T, want endpoint editor", app.systemPopup)
 	}
 	popup.SetRect(0, 0, 120, 32)
 	popup.Draw(screen)
 
-	if popup.popupRect.x < view.contentRect.x ||
-		popup.popupRect.y < view.contentRect.y ||
-		popup.popupRect.x+popup.popupRect.width > view.contentRect.x+view.contentRect.width ||
-		popup.popupRect.y+popup.popupRect.height > view.contentRect.y+view.contentRect.height {
-		t.Fatalf("popup rect %+v should stay inside content %+v", popup.popupRect, view.contentRect)
+	if popup.panelRect.x < view.contentRect.x ||
+		popup.panelRect.y < view.contentRect.y ||
+		popup.panelRect.x+popup.panelRect.width > view.contentRect.x+view.contentRect.width ||
+		popup.panelRect.y+popup.panelRect.height > view.contentRect.y+view.contentRect.height {
+		t.Fatalf("editor panel %+v should stay inside content %+v", popup.panelRect, view.contentRect)
 	}
-	if popup.textRect.height <= 1 {
-		t.Fatalf("text popup height = %d, want multiline editor", popup.textRect.height)
+	if popup.list == nil || popup.form != nil {
+		t.Fatalf("endpoint editor mode = list:%v form:%v, want list mode", popup.list != nil, popup.form != nil)
 	}
 }
 
-func TestEndpointPopupPreservesMetadataForLiveSaveAndCancel(t *testing.T) {
+func TestEndpointEditorEditsMetadataAndBuffersUntilSave(t *testing.T) {
 	app := &App{
 		app:   tview.NewApplication(),
 		pages: tview.NewPages(),
@@ -693,38 +693,92 @@ func TestEndpointPopupPreservesMetadataForLiveSaveAndCancel(t *testing.T) {
 	view := newSettingsView(app, app.cfg)
 	app.pages.AddPage("main", view, true, true)
 	view.openEndpointPopup()
-	popup, ok := app.systemPopup.(*systemTextPopup)
+	popup, ok := app.systemPopup.(*endpointEditor)
 	if !ok {
-		t.Fatalf("system popup = %T, want endpoint text popup", app.systemPopup)
+		t.Fatalf("system popup = %T, want endpoint editor", app.systemPopup)
 	}
 
-	if err := popup.accept("https://two.example/; https://three.example"); err != nil {
-		t.Fatalf("endpoint accept failed: %v", err)
+	popup.openForm(0)
+	popup.draft = models.Endpoint{Name: "Mirror", URL: "https://mirror.example", Enabled: false}
+	popup.commitDraft()
+	if got := view.cfg.Account.Endpoints[0]; got.Name != "Primary" || got.URL != "https://one.example" || !got.Enabled {
+		t.Fatalf("config changed before editor save = %#v", got)
 	}
-	if len(view.cfg.Account.Endpoints) != 2 {
-		t.Fatalf("endpoints after live edit = %#v", view.cfg.Account.Endpoints)
-	}
-	if got := view.cfg.Account.Endpoints[0]; got.Name != "Standby" || got.Enabled {
-		t.Fatalf("unchanged endpoint metadata = %#v, want disabled Standby", got)
-	}
-	if got := view.cfg.Account.Endpoints[1]; got.Name != "Endpoint 2" || !got.Enabled {
-		t.Fatalf("new endpoint metadata = %#v, want default enabled Endpoint 2", got)
+	if got := popup.endpoints[0]; got.Name != "Mirror" || got.URL != "https://mirror.example" || got.Enabled {
+		t.Fatalf("draft endpoint = %#v", got)
 	}
 
+	popup.openForm(-1)
+	popup.draft = models.Endpoint{Name: "New", URL: "https://three.example", Enabled: true}
+	popup.commitDraft()
+	if len(popup.endpoints) != 3 {
+		t.Fatalf("draft endpoints after add = %#v", popup.endpoints)
+	}
+	popup.selected = 2
+	popup.moveSelected(-1)
+	if got := popup.endpoints[1].Name; got != "New" {
+		t.Fatalf("reordered endpoint = %q, want New", got)
+	}
+	popup.selected = 0
+	popup.deleteSelected()
+	if len(popup.endpoints) != 2 || popup.endpoints[0].Name != "New" {
+		t.Fatalf("draft endpoints after delete = %#v", popup.endpoints)
+	}
+
+	popup.saveChanges()
+	if len(view.cfg.Account.Endpoints) != 2 || view.cfg.Account.Endpoints[0].Name != "New" {
+		t.Fatalf("saved endpoints = %#v", view.cfg.Account.Endpoints)
+	}
+	if app.systemPopup != nil {
+		t.Fatal("endpoint editor remained open after save")
+	}
+}
+
+func TestEndpointEditorCancelKeepsOriginalConfig(t *testing.T) {
+	app := &App{
+		app:   tview.NewApplication(),
+		pages: tview.NewPages(),
+		cfg: models.Config{Account: models.Account{Endpoints: []models.Endpoint{
+			{Name: "Primary", URL: "https://one.example", Enabled: true},
+		}}},
+	}
+	view := newSettingsView(app, app.cfg)
+	app.pages.AddPage("main", view, true, true)
 	view.openEndpointPopup()
-	popup, ok = app.systemPopup.(*systemTextPopup)
+	popup, ok := app.systemPopup.(*endpointEditor)
 	if !ok {
-		t.Fatalf("system popup = %T, want endpoint text popup", app.systemPopup)
+		t.Fatalf("system popup = %T, want endpoint editor", app.systemPopup)
 	}
-	if err := popup.accept("https://one.example; https://three.example"); err != nil {
-		t.Fatalf("second endpoint accept failed: %v", err)
-	}
-	popup.cancel()
-	if len(view.cfg.Account.Endpoints) != 2 {
+	popup.openForm(0)
+	popup.draft = models.Endpoint{Name: "Changed", URL: "https://changed.example", Enabled: false}
+	popup.commitDraft()
+	popup.closeEditor()
+	if len(view.cfg.Account.Endpoints) != 1 {
 		t.Fatalf("endpoints after cancel = %#v", view.cfg.Account.Endpoints)
 	}
-	if got := view.cfg.Account.Endpoints[0]; got.Name != "Standby" || got.Enabled || got.URL != "https://two.example" {
-		t.Fatalf("cancel restored first endpoint = %#v, want disabled Standby", got)
+	if got := view.cfg.Account.Endpoints[0]; got.Name != "Primary" || got.URL != "https://one.example" || !got.Enabled {
+		t.Fatalf("cancel changed original endpoint = %#v", got)
+	}
+}
+
+func TestEndpointEditorValidatesNamesURLsAndDuplicates(t *testing.T) {
+	endpoints := []models.Endpoint{{Name: "Primary", URL: "https://one.example", Enabled: true}}
+	tests := []struct {
+		name  string
+		entry models.Endpoint
+		want  string
+	}{
+		{name: "blank name", entry: models.Endpoint{URL: "https://two.example"}, want: "name"},
+		{name: "blank url", entry: models.Endpoint{Name: "Two"}, want: "URL"},
+		{name: "invalid url", entry: models.Endpoint{Name: "Two", URL: "two.example"}, want: "scheme and host"},
+		{name: "duplicate url", entry: models.Endpoint{Name: "Two", URL: "https://one.example/"}, want: "already used"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateEndpointEditorEntry(test.entry, -1, endpoints); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
