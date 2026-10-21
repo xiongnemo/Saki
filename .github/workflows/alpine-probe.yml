@@ -1,0 +1,299 @@
+name: Alpine Packaging Probe
+
+# Measurements behind the Alpine packaging choices, kept on the feature branch
+# only and removed before merge. Nothing here publishes anything.
+#
+# 1. What version string nFPM writes for a dev build, per packager, and how each
+#    package manager orders it against the releases around it.
+# 2. Whether a repository can carry only indices while the packages stay on
+#    GitHub Releases: apt and apk through a redirecting host (as Cloudflare Pages
+#    _redirects would be), dnf through xml:base with no redirector at all.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/alpine-musl
+    paths:
+      - .github/workflows/alpine-probe.yml
+      - .github/probe/**
+
+permissions:
+  contents: read
+
+env:
+  GOPROXY: https://goproxy.cn,direct
+  # A real nermius dev prerelease that already carries deb, rpm and apk assets.
+  LINK_REPO: xiongnemo/nermius
+  LINK_TAG: v0.0.24-dev-69c58635fd1a
+
+jobs:
+  render:
+    name: nFPM rendering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Render one package per packager, version and nFPM release
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq rpm zstd >/dev/null
+          for nf in v2.46.3 v2.48.0; do
+            GOBIN="$PWD/nfpm-$nf" go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$nf"
+          done
+          printf '#!/bin/sh\necho probe\n' > probe-bin
+          chmod +x probe-bin
+          for nf in v2.46.3 v2.48.0; do
+            for ver in v0.1.42-master-70aeedab6885 0.1.42-pre 0.1.42; do
+              out="out/$nf/$ver"
+              mkdir -p "$out"
+          cat > "$out/nfpm.yaml" <<EOF
+          name: probe
+          arch: amd64
+          platform: linux
+          version: "$ver"
+          version_schema: semver
+          release: "1"
+          maintainer: probe <probe@example.invalid>
+          description: probe
+          contents:
+            - src: $PWD/probe-bin
+              dst: /usr/bin/probe
+          EOF
+              for packager in deb rpm apk archlinux; do
+                "./nfpm-$nf/nfpm" package --config "$out/nfpm.yaml" --packager "$packager" --target "$out/" >/dev/null
+              done
+              echo "== nFPM $nf, version input: $ver"
+              (cd "$out" && ls -1 | grep -v nfpm.yaml | sed 's/^/   file: /')
+              echo "   deb  Version: $(dpkg-deb -f "$out"/*.deb Version)"
+              echo "   rpm  V-R:     $(rpm -qp --qf '%{VERSION}-%{RELEASE}' "$out"/*.rpm 2>/dev/null)"
+              echo "   apk  $(tar -xzOf "$out"/*.apk --ignore-zeros .PKGINFO | grep '^pkgver')"
+              echo "   arch $(tar --zstd -xOf "$out"/*.pkg.tar.zst .PKGINFO | grep '^pkgver')"
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rendered
+          path: out
+
+  order-apk:
+    name: apk ordering on Alpine ${{ matrix.alpine }}
+    needs: render
+    runs-on: ubuntu-latest
+    container: alpine:${{ matrix.alpine }}
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ["3.21", "3.24"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rendered
+          path: out
+
+      - name: Validate and compare
+        shell: sh
+        run: |
+          set -u
+          apk --version
+          echo "== apk version -c (prints the invalid ones)"
+          for v in 0.1.41-r1 0.1.42_pre-r1 0.1.42-r1 0.1.42_rc0-r1 0.1.42_git20261022-r1 \
+                   0.1.42_p1-r1 0.1.42_master-70aeedab6885-r1 0.1.42_pre~70aeedab6885-r1 0.1.43_pre-r1; do
+            bad=$(apk version -c "$v" 2>&1)
+            if [ -z "$bad" ]; then echo "   valid    $v"; else echo "   INVALID  $v ($bad)"; fi
+          done
+          echo "== apk version -t A B"
+          cmp() { echo "   $1  $(apk version -t "$1" "$2")  $2"; }
+          cmp 0.1.41-r1                      0.1.42_pre-r1
+          cmp 0.1.42_pre-r1                  0.1.42-r1
+          cmp 0.1.42-r1                      0.1.43_pre-r1
+          cmp 0.1.42_rc0-r1                  0.1.42_pre-r1
+          cmp 0.1.42_git20261022-r1          0.1.42-r1
+          cmp 0.1.42_master-70aeedab6885-r1  0.1.41-r1
+          cmp 0.1.42_master-70aeedab6885-r1  0.1.42-r1
+          cmp 0.1.42_master-70aeedab6885-r1  0.1.42_pre-r1
+          cmp 0.1.42_pre~70aeedab6885-r1     0.1.42_pre-r1
+          cmp 0.1.42_pre~70aeedab6885-r1     0.1.42-r1
+
+      - name: Install nFPM's default spelling, then the _pre spelling
+        shell: sh
+        run: |
+          set -u
+          default=$(ls out/v2.48.0/v0.1.42-master-70aeedab6885/*.apk)
+          pre=$(ls out/v2.48.0/0.1.42-pre/*.apk)
+          stable=$(ls out/v2.48.0/0.1.42/*.apk)
+          echo "== add $default"; apk add --allow-untrusted "$default"; echo "exit=$?"; apk info -v probe
+          echo "== add $pre over it"; apk add --allow-untrusted "$pre"; echo "exit=$?"; apk info -v probe
+          echo "== add $stable over it"; apk add --allow-untrusted "$stable"; echo "exit=$?"; apk info -v probe
+
+  order-others:
+    name: ${{ matrix.tool }} ordering
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: dpkg
+            image: debian:stable
+          - tool: rpm
+            image: fedora:latest
+          - tool: pacman
+            image: archlinux:latest
+    steps:
+      - name: Compare
+        shell: bash
+        run: |
+          set -u
+          case "${{ matrix.tool }}" in
+            dpkg)
+              cmp() { if dpkg --compare-versions "$1" lt "$2"; then r="<"; elif dpkg --compare-versions "$1" eq "$2"; then r="="; else r=">"; fi; echo "   $1  $r  $2"; }
+              cmp 0.1.41-1 0.1.42~master-70aeedab6885-1
+              cmp 0.1.42~master-70aeedab6885-1 0.1.42-1
+              cmp 0.1.42~pre-1 0.1.42-1
+              cmp 0.1.42-1 0.1.43~master-0a1b2c3d4e5f-1
+              ;;
+            rpm)
+              cmp() { r=$(rpm --eval "%{lua: print(rpm.vercmp('$1', '$2'))}"); case $r in -1) r="<";; 0) r="=";; 1) r=">";; esac; echo "   $1  $r  $2"; }
+              cmp 0.1.41-1 0.1.42~master_70aeedab6885-1
+              cmp 0.1.42~master_70aeedab6885-1 0.1.42-1
+              cmp 0.1.42~pre-1 0.1.42-1
+              cmp 0.1.42-1 0.1.43~master_0a1b2c3d4e5f-1
+              ;;
+            pacman)
+              cmp() { r=$(vercmp "$1" "$2"); case $r in -1) r="<";; 0) r="=";; 1) r=">";; esac; echo "   $1  $r  $2"; }
+              cmp 0.1.42-1 0.1.42-1
+              cmp 0.1.42master_70aeedab6885-1 0.1.42-1
+              cmp 0.1.42pre-1 0.1.42-1
+              cmp 0.1.42.r0.g70aeedab6885-1 0.1.42-1
+              ;;
+          esac
+
+  link-apt:
+    name: apt via ${{ matrix.code }} redirect
+    runs-on: ubuntu-latest
+    container: debian:stable
+    strategy:
+      fail-fast: false
+      matrix:
+        code: [302, 308]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Index a Release asset, keep only the index, install through a redirect
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update -qq && apt-get install -y -qq python3 dpkg-dev apt-utils curl ca-certificates >/dev/null
+          asset=nermius-linux-amd64.deb
+          url="https://github.com/${LINK_REPO}/releases/download/${LINK_TAG}/${asset}"
+          echo "== GitHub's own hop"; curl -sI "$url" | grep -iE '^(HTTP|location)' | sed 's/\?.*//'
+          mkdir -p "/repo/pool/${LINK_TAG}"
+          curl -fsSL -o "/repo/pool/${LINK_TAG}/${asset}" "$url"
+          cd /repo
+          dpkg-scanpackages --multiversion pool /dev/null > Packages 2>/dev/null
+          apt-ftparchive release . > Release
+          rm -rf pool
+          echo "== Packages"; cat Packages
+          python3 "$GITHUB_WORKSPACE/.github/probe/redirect_server.py" /repo 8080 ${{ matrix.code }} \
+            "/pool/=https://github.com/${LINK_REPO}/releases/download/" > /tmp/server.log 2>&1 &
+          sleep 1
+          echo "deb [trusted=yes] http://127.0.0.1:8080 ./" > /etc/apt/sources.list.d/probe.list
+          apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/probe.list -o Dir::Etc::sourceparts=- 2>&1 | tail -3
+          status=0
+          apt-get install -y nermius || status=$?
+          echo "== server log"; cat /tmp/server.log
+          [ "$status" = 0 ] && nermius --version
+          exit $status
+
+  link-dnf:
+    name: dnf via xml:base on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:latest", "rockylinux:9"]
+    steps:
+      - name: Index a Release asset, keep only the index, install from GitHub directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf --version | head -2
+          dnf install -y -q createrepo_c >/dev/null
+          asset=nermius-linux-amd64.rpm
+          mkdir -p "/repo/${LINK_TAG}"
+          curl -fsSL -o "/repo/${LINK_TAG}/${asset}" "https://github.com/${LINK_REPO}/releases/download/${LINK_TAG}/${asset}"
+          createrepo_c -q --general-compress-type=gz -u "https://github.com/${LINK_REPO}/releases/download/" /repo
+          rm -f "/repo/${LINK_TAG}/${asset}"
+          echo "== primary.xml location"; zcat /repo/repodata/*-primary.xml.gz | grep -o '<location[^>]*>'
+          printf '[probe]\nname=probe\nbaseurl=file:///repo\ngpgcheck=0\nrepo_gpgcheck=0\n' > /etc/yum.repos.d/probe.repo
+          dnf install -y --repo probe nermius
+          nermius --version
+
+  link-apk:
+    name: apk via ${{ matrix.code }} redirect on Alpine ${{ matrix.alpine }}
+    runs-on: ubuntu-latest
+    container: alpine:${{ matrix.alpine }}
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ["3.21", "3.24"]
+        code: [302, 308]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Index a Release asset, keep only the index, install through a redirect
+        shell: sh
+        run: |
+          set -eu
+          apk add --no-cache -q python3 curl tar
+          apk --version
+          asset=nermius-linux-amd64.apk
+          url="https://github.com/${LINK_REPO}/releases/download/${LINK_TAG}/${asset}"
+          curl -fsSL -o "/tmp/${asset}" "$url"
+          pkgver=$(tar -xzOf "/tmp/${asset}" --ignore-zeros .PKGINFO | sed -n 's/^pkgver = //p')
+          arch=$(apk --print-arch)
+          name="nermius-${pkgver}.apk"
+          mkdir -p "/repo/${arch}"
+          cp "/tmp/${asset}" "/repo/${arch}/${name}"
+          apk index --allow-untrusted -o "/repo/${arch}/APKINDEX.tar.gz" "/repo/${arch}/${name}"
+          rm -f "/repo/${arch}/${name}"
+          python3 "$GITHUB_WORKSPACE/.github/probe/redirect_server.py" /repo 8080 ${{ matrix.code }} \
+            "/${arch}/${name}=${url}" > /tmp/server.log 2>&1 &
+          sleep 1
+          status=0
+          apk add --allow-untrusted --repository http://127.0.0.1:8080 nermius || status=$?
+          echo "== server log"; cat /tmp/server.log
+          [ "$status" = 0 ] && nermius --version
+          exit $status
+
+  link-apk3-absolute:
+    name: apk-tools 3 index with absolute package URLs
+    runs-on: ubuntu-latest
+    container: alpine:3.24
+    steps:
+      - name: mkndx --pkgname-spec pointing straight at the Release asset
+        shell: sh
+        run: |
+          set -u
+          apk add --no-cache -q curl
+          apk --version
+          asset=nermius-linux-amd64.apk
+          url="https://github.com/${LINK_REPO}/releases/download/${LINK_TAG}/${asset}"
+          curl -fsSL -o "/tmp/${asset}" "$url"
+          arch=$(apk --print-arch)
+          mkdir -p "/repo/${arch}"
+          apk mkndx --allow-untrusted --pkgname-spec "$url" -o "/repo/${arch}/Packages.adb" "/tmp/${asset}"; echo "mkndx exit=$?"
+          ls -l "/repo/${arch}"
+          apk adbdump "/repo/${arch}/Packages.adb" 2>&1 | head -30
+          for repo in "file:///repo" "/repo/${arch}/Packages.adb" "file:///repo/${arch}/Packages.adb"; do
+            echo "== apk add --repository $repo"
+            apk add --allow-untrusted --repository "$repo" nermius; echo "exit=$?"
+            apk del -q nermius 2>/dev/null || true
+          done
