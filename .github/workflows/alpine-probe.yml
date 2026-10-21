@@ -226,7 +226,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf --version | head -2
+          dnf --version 2>&1 | sed -n 1,2p
           dnf install -y -q createrepo_c >/dev/null
           asset=nermius-linux-amd64.rpm
           mkdir -p "/repo/${LINK_TAG}"
