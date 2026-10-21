@@ -352,3 +352,11 @@ Status: completed.
 - [x] Package an `.apk` with nFPM. apk rejects nFPM's default prerelease spelling (`0.1.42_master-<hash>-r1`), so dev builds use `_pre` and keep the commit outside the version.
 - [x] Run the test suite under musl and smoke-test the `.apk` on apk-tools 2 (Alpine 3.21) and apk-tools 3 (Alpine 3.24).
 - [x] Publish the musl archives and `.apk` files with the dev prerelease.
+
+## Linux deb and rpm Packages
+
+Status: completed.
+
+- [x] Package the glibc Linux builds (`amd64`, `arm64`, `i686`) as `.deb` and `.rpm` with the same nFPM template as the `.apk`.
+- [x] Depend on `libasound2t64 | libasound2` (deb) and `alsa-lib` (rpm); Ubuntu 24.04 renamed the library for the 64-bit time_t transition.
+- [x] Smoke-install on Debian stable, Ubuntu 22.04 and 24.04, Fedora, and Rocky Linux 9, next to the Alpine checks, before publishing.
