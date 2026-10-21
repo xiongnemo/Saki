@@ -34,7 +34,7 @@ jobs:
         run: go test ./...
 
   build:
-    name: Build ${{ matrix.goos }}-${{ matrix.arch_label }}
+    name: Build ${{ matrix.goos }}${{ matrix.libc == 'musl' && '-musl' || '' }}-${{ matrix.arch_label }}
     needs: test
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -48,6 +48,18 @@ jobs:
             cc: gcc
             cgo_cflags: ""
             cgo_ldflags: ""
+          # musl builds run inside Alpine on a native runner. malgo needs cgo, and
+          # a glibc binary cannot start on Alpine at all.
+          - goos: linux
+            goarch: amd64
+            arch_label: amd64
+            libc: musl
+            runner: ubuntu-latest
+          - goos: linux
+            goarch: arm64
+            arch_label: arm64
+            libc: musl
+            runner: ubuntu-24.04-arm
           - goos: linux
             goarch: arm64
             arch_label: arm64
@@ -211,7 +223,7 @@ jobs:
             version="${version}-dirty"
           fi
           ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${base_version} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty}"
-          artifact_name="saki-${version}-${{ matrix.goos }}-${{ matrix.arch_label }}"
+          artifact_name="saki-${version}-${{ matrix.goos }}${{ matrix.libc == 'musl' && '-musl' || '' }}-${{ matrix.arch_label }}"
           {
             echo "BRANCH_NAME=${branch}"
             echo "SHORT_SHA=${short_sha}"
@@ -226,7 +238,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build Unix artifact
-        if: matrix.goos != 'windows'
+        if: matrix.goos != 'windows' && matrix.libc != 'musl'
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
@@ -241,6 +253,60 @@ jobs:
           go build -trimpath -ldflags "${VERSION_LDFLAGS}" -o "dist/${ARTIFACT_NAME}/saki" ./cmd/saki
           tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
           echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
+
+      # The oldest supported Alpine is the build root, so the binary only asks for
+      # musl symbols every newer release still has. The Go toolchain setup-go
+      # installed is statically linked, so the exact version go.mod names runs
+      # unchanged inside the container. The suite runs here too: this is the only
+      # place the cgo audio path is exercised against musl.
+      - name: Build musl artifact
+        if: matrix.libc == 'musl'
+        shell: bash
+        env:
+          ALPINE_BUILD_IMAGE: alpine:3.21
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$(go env GOROOT):/usr/local/go:ro" \
+            -v "$PWD:/src" -w /src \
+            -e GOPROXY -e VERSION_LDFLAGS -e ARTIFACT_NAME \
+            -e HOST_IDS="$(id -u):$(id -g)" \
+            "$ALPINE_BUILD_IMAGE" sh -euc '
+              apk add --no-cache gcc musl-dev alsa-lib >/dev/null
+              export PATH=/usr/local/go/bin:$PATH CGO_ENABLED=1 GOFLAGS=-buildvcs=false
+              go version
+              go test ./...
+              mkdir -p "dist/${ARTIFACT_NAME}"
+              go build -trimpath -ldflags "${VERSION_LDFLAGS}" -o "dist/${ARTIFACT_NAME}/saki" ./cmd/saki
+              chown -R "$HOST_IDS" dist
+            '
+          file "dist/${ARTIFACT_NAME}/saki"
+          readelf -d "dist/${ARTIFACT_NAME}/saki" | grep NEEDED
+          tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
+          echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
+
+      # apk accepts only _alpha, _beta, _pre and _rc before a release, and nFPM
+      # copies the semver prerelease after an underscore without checking it:
+      # v0.1.42-dev-<commit> would become 0.1.42_dev-<commit>-r1, which apk-tools
+      # treats as an invalid version. Every build here is a dev build, so the
+      # package is 0.1.42_pre-r1 -- below a later v0.1.42 tag, above v0.1.41 --
+      # and the full version, commit included, goes into the description.
+      - name: Package apk
+        if: matrix.libc == 'musl'
+        shell: bash
+        env:
+          NFPM_ARCH: ${{ matrix.goarch }}
+          NFPM_RELEASE: v2.48.0
+        run: |
+          set -euo pipefail
+          go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_RELEASE}"
+          sed -e "s|@NFPM_ARCH@|${NFPM_ARCH}|g" \
+              -e "s|@NFPM_VERSION@|${SAKI_BASE_VERSION#v}-pre|g" \
+              -e "s|@NFPM_BINARY@|${PWD}/dist/${ARTIFACT_NAME}/saki|g" \
+              -e "s|@SAKI_VERSION@|${SAKI_VERSION}|g" \
+              packaging/nfpm.yaml > dist/nfpm.yaml
+          nfpm package --config dist/nfpm.yaml --packager apk --target "dist/${ARTIFACT_NAME}.apk"
+          tar -xzOf "dist/${ARTIFACT_NAME}.apk" --ignore-zeros .PKGINFO
 
       - name: Build Windows artifact
         if: matrix.goos == 'windows'
@@ -263,9 +329,60 @@ jobs:
           path: ${{ env.ARCHIVE_PATH }}
           if-no-files-found: error
 
+      - name: Upload apk
+        if: matrix.libc == 'musl'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-apk
+          path: dist/${{ env.ARTIFACT_NAME }}.apk
+          if-no-files-found: error
+
+  # Installs the package the way a user would, on both apk-tools generations:
+  # Alpine 3.21 ships apk-tools 2, 3.24 ships apk-tools 3. The dependency on
+  # alsa-lib is what lets miniaudio find a backend at runtime, so it has to be
+  # pulled in by the package rather than be present already.
+  apk-smoke:
+    name: Smoke apk on Alpine ${{ matrix.alpine }} (${{ matrix.arch_label }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ["3.21", "3.24"]
+        arch_label: [amd64, arm64]
+        include:
+          - arch_label: amd64
+            runner: ubuntu-latest
+          - arch_label: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: saki-*-linux-musl-${{ matrix.arch_label }}-apk
+          path: pkg
+          merge-multiple: true
+
+      - name: Install and run
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l pkg
+          docker run --rm -v "$PWD/pkg:/pkg:ro" "alpine:${{ matrix.alpine }}" sh -euc '
+            apk --version
+            apk add --no-cache --allow-untrusted /pkg/*.apk
+            apk info -e alsa-lib
+            version=$(apk info -v saki | sed "s/^saki-//")
+            echo "installed saki $version"
+            invalid=$(apk version -c "$version")
+            [ -z "$invalid" ] || { echo "apk calls $version invalid"; exit 1; }
+            [ "$(apk version -t 0.0.1-r1 "$version")" = "<" ]
+            saki --version
+          '
+
   prerelease:
     name: Publish Dev Prerelease
-    needs: build
+    needs: [build, apk-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
@@ -348,7 +465,30 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.apk
           body: |
             Automated prerelease build from `dev`.
 
             Commit: `${{ github.sha }}`
+
+      # The package repository fetches this release by tag and hashes the assets
+      # itself, so all this sends is which release to look at. Without the token
+      # the release still ships and the repository's own sweep picks it up later.
+      - name: Tell the package repository
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_DISPATCH_TOKEN }}
+          PACKAGES_REPO: ${{ vars.PACKAGES_REPO || 'xiongnemo/packages' }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "PACKAGES_DISPATCH_TOKEN is not set; ${PACKAGES_REPO} will pick this up on its own schedule."
+            exit 0
+          fi
+          gh api "repos/${PACKAGES_REPO}/dispatches" \
+            -f event_type=release-published \
+            -f "client_payload[repository]=${GITHUB_REPOSITORY}" \
+            -f "client_payload[tag]=${TAG}" \
+            -f "client_payload[channel]=nightly" \
+            -f "client_payload[sha]=${GITHUB_SHA}" \
+            || echo "::warning title=Package repository not notified::dispatch to ${PACKAGES_REPO} failed; its scheduled sweep is the backstop."
