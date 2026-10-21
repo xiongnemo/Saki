@@ -97,7 +97,9 @@ jobs:
           path: out
 
       - name: Validate and compare
-        shell: sh
+        # Not "sh -e": apk version -c exits non-zero on an invalid version, and
+        # that is a result to print rather than a reason to stop.
+        shell: sh {0}
         run: |
           set -u
           apk --version
@@ -121,7 +123,7 @@ jobs:
           cmp 0.1.42_pre~70aeedab6885-r1     0.1.42-r1
 
       - name: Install nFPM's default spelling, then the _pre spelling
-        shell: sh
+        shell: sh {0}
         run: |
           set -u
           default=$(ls out/v2.48.0/v0.1.42-master-70aeedab6885/*.apk)
@@ -208,7 +210,7 @@ jobs:
           status=0
           apt-get install -y nermius || status=$?
           echo "== server log"; cat /tmp/server.log
-          [ "$status" = 0 ] && nermius --version
+          [ "$status" = 0 ] && nermius version
           exit $status
 
   link-dnf:
@@ -234,7 +236,7 @@ jobs:
           echo "== primary.xml location"; zcat /repo/repodata/*-primary.xml.gz | grep -o '<location[^>]*>'
           printf '[probe]\nname=probe\nbaseurl=file:///repo\ngpgcheck=0\nrepo_gpgcheck=0\n' > /etc/yum.repos.d/probe.repo
           dnf install -y --repo probe nermius
-          nermius --version
+          nermius version
 
   link-apk:
     name: apk via ${{ matrix.code }} redirect on Alpine ${{ matrix.alpine }}
@@ -270,8 +272,11 @@ jobs:
           status=0
           apk add --allow-untrusted --repository http://127.0.0.1:8080 nermius || status=$?
           echo "== server log"; cat /tmp/server.log
-          [ "$status" = 0 ] && nermius --version
-          exit $status
+          [ "$status" = 0 ] || exit $status
+          apk add --no-cache -q file
+          apk info -L nermius
+          file "$(command -v nermius || echo /usr/bin/nermius)"
+          nermius version
 
   link-apk3-absolute:
     name: apk-tools 3 index with absolute package URLs
@@ -279,7 +284,7 @@ jobs:
     container: alpine:3.24
     steps:
       - name: mkndx --pkgname-spec pointing straight at the Release asset
-        shell: sh
+        shell: sh {0}
         run: |
           set -u
           apk add --no-cache -q curl
