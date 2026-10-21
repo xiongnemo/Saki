@@ -337,18 +337,18 @@ Status: completed.
 
 ## Unix CI Self-Install Path Tests
 
-Status: in progress.
+Status: completed.
 
-- [ ] `TestPathReport_windows_uses_PATHEXT_and_case_folding` simulates Windows but borrows the host's list separator and case-sensitive filesystem, so it fails on Linux CI.
-- [ ] `TestPathReport_missing_directory_returns_quoted_advisory_hint` asserts a `'C:` prefix that only exists in a Windows temp directory.
-- [ ] Make both tests host-independent without changing production behaviour, then run `go test ./...` on Windows and in Linux CI.
+- [x] `TestPathReport_windows_uses_PATHEXT_and_case_folding` simulates Windows but borrows the host's list separator and case-sensitive filesystem, so it fails on Linux CI.
+- [x] `TestPathReport_missing_directory_returns_quoted_advisory_hint` asserts a `'C:` prefix that only exists in a Windows temp directory.
+- [x] Make both tests host-independent without changing production behaviour, then run `go test ./...` on Windows and in Linux CI.
 
 ## Alpine (musl) Builds
 
-Status: in progress.
+Status: completed.
 
-- [ ] Build `linux-musl` amd64/arm64 artifacts inside an Alpine container on native runners; keep `CGO_ENABLED=1` for malgo/miniaudio.
-- [ ] The musl binary links only `libc.musl-*.so.1`; miniaudio `dlopen`s ALSA/PulseAudio at runtime, so the package depends on `alsa-lib`.
-- [ ] Package an `.apk` with nFPM. apk rejects nFPM's default prerelease spelling (`0.1.42_master-<hash>-r1`), so dev builds use `_pre` and keep the commit outside the version.
-- [ ] Run the test suite under musl and smoke-test the `.apk` on apk-tools 2 (Alpine 3.21) and apk-tools 3 (Alpine 3.24).
-- [ ] Publish the musl archives and `.apk` files with the dev prerelease.
+- [x] Build `linux-musl` amd64/arm64 artifacts inside an Alpine container on native runners; keep `CGO_ENABLED=1` for malgo/miniaudio.
+- [x] The musl binary links only `libc.musl-*.so.1`; miniaudio `dlopen`s ALSA/PulseAudio at runtime, so the package depends on `alsa-lib`.
+- [x] Package an `.apk` with nFPM. apk rejects nFPM's default prerelease spelling (`0.1.42_master-<hash>-r1`), so dev builds use `_pre` and keep the commit outside the version.
+- [x] Run the test suite under musl and smoke-test the `.apk` on apk-tools 2 (Alpine 3.21) and apk-tools 3 (Alpine 3.24).
+- [x] Publish the musl archives and `.apk` files with the dev prerelease.
