@@ -285,18 +285,21 @@ jobs:
           tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
           echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
 
-      # apk accepts only _alpha, _beta, _pre and _rc before a release, and nFPM
-      # copies the semver prerelease after an underscore without checking it:
+      # Every build here is a dev build, and each format needs that said its own
+      # way. nFPM turns the semver prerelease into deb and rpm's `~` (0.1.42~pre-1
+      # sorts before 0.1.42-1), but for apk it only prepends an underscore, and
+      # apk accepts nothing after one except _alpha, _beta, _pre and _rc:
       # v0.1.42-dev-<commit> would become 0.1.42_dev-<commit>-r1, which apk-tools
-      # treats as an invalid version. Every build here is a dev build, so the
-      # package is 0.1.42_pre-r1 -- below a later v0.1.42 tag, above v0.1.41 --
-      # and the full version, commit included, goes into the description.
-      - name: Package apk
-        if: matrix.libc == 'musl'
+      # calls invalid. So the prerelease is always `pre` -- 0.1.42_pre-r1 for apk,
+      # below a later v0.1.42 tag and above v0.1.41 -- and the full version,
+      # commit included, goes into the description.
+      - name: Package
+        if: matrix.goos == 'linux'
         shell: bash
         env:
           NFPM_ARCH: ${{ matrix.goarch }}
           NFPM_RELEASE: v2.48.0
+          PACKAGERS: ${{ matrix.libc == 'musl' && 'apk' || 'deb rpm' }}
         run: |
           set -euo pipefail
           go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_RELEASE}"
@@ -305,8 +308,13 @@ jobs:
               -e "s|@NFPM_BINARY@|${PWD}/dist/${ARTIFACT_NAME}/saki|g" \
               -e "s|@SAKI_VERSION@|${SAKI_VERSION}|g" \
               packaging/nfpm.yaml > dist/nfpm.yaml
-          nfpm package --config dist/nfpm.yaml --packager apk --target "dist/${ARTIFACT_NAME}.apk"
-          tar -xzOf "dist/${ARTIFACT_NAME}.apk" --ignore-zeros .PKGINFO
+          for packager in $PACKAGERS; do
+            nfpm package --config dist/nfpm.yaml --packager "$packager" --target "dist/${ARTIFACT_NAME}.${packager}"
+          done
+          case "$PACKAGERS" in
+            apk) tar -xzOf "dist/${ARTIFACT_NAME}.apk" --ignore-zeros .PKGINFO ;;
+            *) dpkg-deb -f "dist/${ARTIFACT_NAME}.deb" Package Version Architecture Depends ;;
+          esac
 
       - name: Build Windows artifact
         if: matrix.goos == 'windows'
@@ -329,60 +337,88 @@ jobs:
           path: ${{ env.ARCHIVE_PATH }}
           if-no-files-found: error
 
-      - name: Upload apk
-        if: matrix.libc == 'musl'
+      - name: Upload packages
+        if: matrix.goos == 'linux'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}-apk
-          path: dist/${{ env.ARTIFACT_NAME }}.apk
+          name: ${{ env.ARTIFACT_NAME }}-packages
+          path: |
+            dist/*.apk
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
-  # Installs the package the way a user would, on both apk-tools generations:
-  # Alpine 3.21 ships apk-tools 2, 3.24 ships apk-tools 3. The dependency on
-  # alsa-lib is what lets miniaudio find a backend at runtime, so it has to be
-  # pulled in by the package rather than be present already.
-  apk-smoke:
-    name: Smoke apk on Alpine ${{ matrix.alpine }} (${{ matrix.arch_label }})
+  # Installs each package the way a user would, and checks that the audio
+  # library arrives as a dependency rather than being present already: miniaudio
+  # needs ALSA at runtime and finds no backend without it. Alpine 3.21 and 3.24
+  # are apk-tools 2 and 3; Ubuntu 24.04 renamed libasound2 to libasound2t64.
+  package-smoke:
+    name: Smoke ${{ matrix.format }} on ${{ matrix.image }} (${{ matrix.arch_label }})
     needs: build
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch_label == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
-        alpine: ["3.21", "3.24"]
-        arch_label: [amd64, arm64]
         include:
-          - arch_label: amd64
-            runner: ubuntu-latest
-          - arch_label: arm64
-            runner: ubuntu-24.04-arm
+          - { format: apk, image: "alpine:3.21", arch_label: amd64, libc: musl }
+          - { format: apk, image: "alpine:3.21", arch_label: arm64, libc: musl }
+          - { format: apk, image: "alpine:3.24", arch_label: amd64, libc: musl }
+          - { format: apk, image: "alpine:3.24", arch_label: arm64, libc: musl }
+          - { format: deb, image: "debian:stable", arch_label: amd64 }
+          - { format: deb, image: "debian:stable", arch_label: arm64 }
+          - { format: deb, image: "ubuntu:22.04", arch_label: amd64 }
+          - { format: deb, image: "ubuntu:24.04", arch_label: amd64 }
+          - { format: deb, image: "ubuntu:24.04", arch_label: arm64 }
+          - { format: rpm, image: "fedora:latest", arch_label: amd64 }
+          - { format: rpm, image: "fedora:latest", arch_label: arm64 }
+          - { format: rpm, image: "rockylinux:9", arch_label: amd64 }
 
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: saki-*-linux-musl-${{ matrix.arch_label }}-apk
+          pattern: saki-*-linux-${{ matrix.libc == 'musl' && 'musl-' || '' }}${{ matrix.arch_label }}-packages
           path: pkg
           merge-multiple: true
 
       - name: Install and run
         shell: bash
+        env:
+          FORMAT: ${{ matrix.format }}
         run: |
           set -euo pipefail
           ls -l pkg
-          docker run --rm -v "$PWD/pkg:/pkg:ro" "alpine:${{ matrix.alpine }}" sh -euc '
-            apk --version
-            apk add --no-cache --allow-untrusted /pkg/*.apk
-            apk info -e alsa-lib
-            version=$(awk "/^P:saki\$/ { found = 1 } found && /^V:/ { print substr(\$0, 3); exit }" /lib/apk/db/installed)
+          docker run --rm -e FORMAT -v "$PWD/pkg:/pkg:ro" "${{ matrix.image }}" sh -euc '
+            case "$FORMAT" in
+              apk)
+                apk --version
+                apk add --no-cache --allow-untrusted /pkg/*.apk
+                apk info -e alsa-lib
+                version=$(awk "/^P:saki\$/ { found = 1 } found && /^V:/ { print substr(\$0, 3); exit }" /lib/apk/db/installed)
+                invalid=$(apk version -c "$version")
+                [ -z "$invalid" ] || { echo "apk calls $version invalid"; exit 1; }
+                [ "$(apk version -t 0.0.1-r1 "$version")" = "<" ]
+                ;;
+              deb)
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq
+                apt-get install -y -qq /pkg/*.deb
+                dpkg -l "libasound2*" | grep "^ii"
+                version=$(dpkg-query -W -f "\${Version}" saki)
+                dpkg --compare-versions 0.0.1-1 lt "$version"
+                ;;
+              rpm)
+                dnf install -y -q /pkg/*.rpm
+                rpm -q alsa-lib
+                version=$(rpm -q --qf "%{VERSION}-%{RELEASE}" saki)
+                ;;
+            esac
             echo "installed saki $version"
-            invalid=$(apk version -c "$version")
-            [ -z "$invalid" ] || { echo "apk calls $version invalid"; exit 1; }
-            [ "$(apk version -t 0.0.1-r1 "$version")" = "<" ]
             saki --version
           '
 
   prerelease:
     name: Publish Dev Prerelease
-    needs: [build, apk-smoke]
+    needs: [build, package-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
@@ -466,6 +502,8 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.apk
+            dist/*.deb
+            dist/*.rpm
           body: |
             Automated prerelease build from `dev`.
 
