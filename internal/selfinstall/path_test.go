@@ -115,6 +115,16 @@ func TestPathReport_windows_uses_PATHEXT_and_case_folding(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := runtimeFor(source, root, "windows")
+	// Simulate Windows on any host: the list separator and the
+	// case-insensitive lookup of saki.BAT must not come from the host.
+	runtime.PathSeparator = ";"
+	baseLstat := runtime.Lstat
+	runtime.Lstat = func(path string) (os.FileInfo, error) {
+		if strings.EqualFold(path, shadow) {
+			return baseLstat(shadow)
+		}
+		return baseLstat(path)
+	}
 	runtime.Getenv = func(key string) string {
 		switch key {
 		case "PATH":
@@ -153,7 +163,7 @@ func TestPathReport_missing_directory_returns_quoted_advisory_hint(t *testing.T)
 	}
 	installer := mustNew(t, Options{Directory: directory}, runtime)
 	report := installer.pathReport(Paths{Directory: directory, Target: filepath.Join(directory, "saki")})
-	if report.DirectoryOnPath || report.Reachable || !strings.Contains(report.Hint, "'C:") || !strings.Contains(report.Hint, "bin with space") || !strings.Contains(report.Hint, "advisory only") {
+	if report.DirectoryOnPath || report.Reachable || !strings.Contains(report.Hint, quotePOSIX(directory)) || !strings.Contains(report.Hint, "advisory only") {
 		t.Fatalf("path report = %#v", report)
 	}
 }
