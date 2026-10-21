@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+#
+# Template, not a config: .github/workflows/release.yml replaces the @NAME@
+# placeholders before nFPM reads it. Only the musl build is packaged today, as
+# an .apk.
+name: saki
+arch: "@NFPM_ARCH@"
+platform: linux
+version: "@NFPM_VERSION@"
+version_schema: semver
+release: "1"
+section: sound
+maintainer: xiongnemo <xiongnemo@users.noreply.github.com>
+description: "Terminal Subsonic music player (@SAKI_VERSION@)"
+vendor: xiongnemo
+homepage: https://github.com/xiongnemo/Saki
+disable_globbing: true
+overrides:
+  apk:
+    # miniaudio dlopens ALSA at runtime; without it there is no audio backend.
+    depends:
+      - alsa-lib
+contents:
+  - src: "@NFPM_BINARY@"
+    dst: /usr/bin/saki
+    file_info:
+      mode: 0755
