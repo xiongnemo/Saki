@@ -134,17 +134,21 @@ workflow targets `amd64`, `arm64`, and `i686` for Linux and Windows, and
 `amd64` and `arm64` for macOS. Artifacts are published to a GitHub prerelease
 named like `v0.0.1-dev-06b7a4654205`.
 
-Alpine and other musl systems use the `linux-musl` builds (`amd64` and
-`arm64`); the regular Linux builds link glibc and do not start there. Each musl
-build also ships as an `.apk`, which pulls in `alsa-lib` for audio:
+The Linux builds also ship as packages that pull in ALSA for audio: `.deb` and
+`.rpm` for the glibc builds (`amd64`, `arm64`, `i686`), and `.apk` for the
+`linux-musl` builds (`amd64`, `arm64`). Alpine and other musl systems need the
+musl builds; the regular Linux builds link glibc and do not start there.
 
 ```sh
+sudo apt install ./saki-v0.0.62-dev-<commit>-linux-amd64.deb
+sudo dnf install ./saki-v0.0.62-dev-<commit>-linux-amd64.rpm
 apk add --allow-untrusted ./saki-v0.0.62-dev-<commit>-linux-musl-amd64.apk
 ```
 
-That build installs as version `0.0.62_pre-r1`: apk has no room for a branch
-and commit in a version, so dev builds are marked `_pre` (ordered before a later
-`v0.0.62` tag) and the full build version is in the package description.
+That build installs as version `0.0.62~pre-1` (deb, rpm) or `0.0.62_pre-r1`
+(apk): a package version has no room for a branch and commit, so dev builds are
+marked as a prerelease of their base version, ordered before a later `v0.0.62`
+tag, and the full build version is in the package description.
 
 Each build embeds version metadata in this format:
 

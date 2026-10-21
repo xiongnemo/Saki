@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
 #
 # Template, not a config: .github/workflows/release.yml replaces the @NAME@
-# placeholders before nFPM reads it. Only the musl build is packaged today, as
-# an .apk.
+# placeholders before nFPM reads it. glibc builds are packaged as .deb and .rpm,
+# musl builds as .apk.
 name: saki
 arch: "@NFPM_ARCH@"
 platform: linux
@@ -15,9 +15,17 @@ description: "Terminal Subsonic music player (@SAKI_VERSION@)"
 vendor: xiongnemo
 homepage: https://github.com/xiongnemo/Saki
 disable_globbing: true
+# miniaudio dlopens ALSA at runtime; without it there is no audio backend.
 overrides:
   apk:
-    # miniaudio dlopens ALSA at runtime; without it there is no audio backend.
+    depends:
+      - alsa-lib
+  deb:
+    depends:
+      # Ubuntu 24.04 and Debian 13 renamed the library for the 64-bit time_t
+      # transition; older releases still ship libasound2.
+      - libasound2t64 | libasound2
+  rpm:
     depends:
       - alsa-lib
 contents:
