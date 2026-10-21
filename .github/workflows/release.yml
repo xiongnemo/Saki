@@ -372,7 +372,7 @@ jobs:
             apk --version
             apk add --no-cache --allow-untrusted /pkg/*.apk
             apk info -e alsa-lib
-            version=$(apk info -v saki | sed "s/^saki-//")
+            version=$(awk "/^P:saki\$/ { found = 1 } found && /^V:/ { print substr(\$0, 3); exit }" /lib/apk/db/installed)
             echo "installed saki $version"
             invalid=$(apk version -c "$version")
             [ -z "$invalid" ] || { echo "apk calls $version invalid"; exit 1; }
