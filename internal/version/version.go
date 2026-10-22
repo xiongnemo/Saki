@@ -10,12 +10,22 @@ var (
 	BranchName  = ""
 	CommitHash  = ""
 	Dirty       = ""
+	// Release marks a build of exactly a vX.Y.Z tag. Such a build is the
+	// release, so it renders bare, as the tag and the package version do.
+	Release = ""
 )
 
 func String() string {
 	base := strings.TrimSpace(BaseVersion)
 	if base == "" {
 		base = "v0.0.0"
+	}
+
+	if parseDirty(Release) {
+		if parseDirty(Dirty) {
+			return base + "-dirty"
+		}
+		return base
 	}
 
 	branch := sanitizePart(BranchName)

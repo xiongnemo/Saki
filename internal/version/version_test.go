@@ -38,6 +38,28 @@ func TestStringWithoutDirty(t *testing.T) {
 	}
 }
 
+func TestStringForReleaseBuildIsBare(t *testing.T) {
+	oldBase, oldBranch, oldCommit, oldDirty, oldRelease := BaseVersion, BranchName, CommitHash, Dirty, Release
+	defer func() {
+		BaseVersion, BranchName, CommitHash, Dirty, Release = oldBase, oldBranch, oldCommit, oldDirty, oldRelease
+	}()
+
+	BaseVersion = "v0.1.0"
+	BranchName = "v0.1.0"
+	CommitHash = "abcdef123456"
+	Dirty = "false"
+	Release = "true"
+
+	if got, want := String(), "v0.1.0"; got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
+	}
+
+	Dirty = "true"
+	if got, want := String(), "v0.1.0-dirty"; got != want {
+		t.Fatalf("String() with dirty tree = %q, want %q", got, want)
+	}
+}
+
 func TestSanitizePart(t *testing.T) {
 	got := sanitizePart(" refs/heads/dev branch! ")
 	want := "refs-heads-dev-branch"
