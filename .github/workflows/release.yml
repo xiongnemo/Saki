@@ -1,10 +1,21 @@
 name: Release Builds
 
+# A push to `dev` publishes a dev prerelease; pushing an exact vMAJOR.MINOR.PATCH
+# tag publishes that version as a release. `rehearse_release` builds, packages
+# and smoke-tests a release of the current commit without publishing anything,
+# so the release path can be checked before a tag exists.
 on:
   workflow_dispatch:
+    inputs:
+      rehearse_release:
+        description: Build this commit as a release (nothing is published)
+        type: boolean
+        default: false
   push:
     branches:
       - dev
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 env:
   BASE_VERSION_FALLBACK: v0.0.1
@@ -37,6 +48,11 @@ jobs:
     name: Build ${{ matrix.goos }}${{ matrix.libc == 'musl' && '-musl' || '' }}-${{ matrix.arch_label }}
     needs: test
     runs-on: ${{ matrix.runner }}
+    # What the artifacts were built as, so publishing does not derive it again.
+    # Every matrix entry computes the same values from the same commit.
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      release: ${{ steps.meta.outputs.release }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +182,8 @@ jobs:
       - id: meta
         name: Compute build metadata
         shell: bash
+        env:
+          REHEARSE_RELEASE: ${{ inputs.rehearse_release || false }}
         run: |
           set -euo pipefail
           compute_base_version() {
@@ -222,7 +240,27 @@ jobs:
           if [[ "$dirty" == "true" ]]; then
             version="${version}-dirty"
           fi
-          ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${base_version} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty}"
+          # A tag build is the release, and renders bare -- but only if the tag is
+          # the version this commit computes anyway. Otherwise one build would
+          # carry two versions, the tag's and the one in the binary.
+          release=false
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "${base_version}" ]]; then
+              echo "tag ${GITHUB_REF_NAME} is not the version this commit computes, ${base_version}" >&2
+              exit 1
+            fi
+            release=true
+          elif [[ "${REHEARSE_RELEASE}" == "true" ]]; then
+            release=true
+          fi
+          if [[ "$release" == "true" ]]; then
+            if [[ "$dirty" == "true" ]]; then
+              echo "a release must be built from a clean tree" >&2
+              exit 1
+            fi
+            version="${base_version}"
+          fi
+          ldflags="-s -w -X github.com/xiongnemo/saki/internal/version.BaseVersion=${base_version} -X github.com/xiongnemo/saki/internal/version.BranchName=${branch} -X github.com/xiongnemo/saki/internal/version.CommitHash=${short_sha} -X github.com/xiongnemo/saki/internal/version.Dirty=${dirty} -X github.com/xiongnemo/saki/internal/version.Release=${release}"
           artifact_name="saki-${version}-${{ matrix.goos }}${{ matrix.libc == 'musl' && '-musl' || '' }}-${{ matrix.arch_label }}"
           {
             echo "BRANCH_NAME=${branch}"
@@ -233,9 +271,12 @@ jobs:
             echo "SAKI_VERSION_COMMIT=${short_sha}"
             echo "SAKI_VERSION_DIRTY=${dirty}"
             echo "SAKI_VERSION=${version}"
+            echo "SAKI_RELEASE=${release}"
             echo "VERSION_LDFLAGS=${ldflags}"
             echo "ARTIFACT_NAME=${artifact_name}"
           } >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release=${release}" >> "$GITHUB_OUTPUT"
 
       - name: Build Unix artifact
         if: matrix.goos != 'windows' && matrix.libc != 'musl'
@@ -285,8 +326,9 @@ jobs:
           tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
           echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
 
-      # Every build here is a dev build, and each format needs that said its own
-      # way. nFPM turns the semver prerelease into deb and rpm's `~` (0.1.42~pre-1
+      # A release is packaged as its version, 0.1.42-1. A dev build is a
+      # prerelease of its base, and each format needs that said its own way.
+      # nFPM turns the semver prerelease into deb and rpm's `~` (0.1.42~pre-1
       # sorts before 0.1.42-1), but for apk it only prepends an underscore, and
       # apk accepts nothing after one except _alpha, _beta, _pre and _rc:
       # v0.1.42-dev-<commit> would become 0.1.42_dev-<commit>-r1, which apk-tools
@@ -304,7 +346,7 @@ jobs:
           set -euo pipefail
           go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_RELEASE}"
           sed -e "s|@NFPM_ARCH@|${NFPM_ARCH}|g" \
-              -e "s|@NFPM_VERSION@|${SAKI_BASE_VERSION#v}-pre|g" \
+              -e "s|@NFPM_VERSION@|${SAKI_BASE_VERSION#v}$([ "$SAKI_RELEASE" = true ] || echo -pre)|g" \
               -e "s|@NFPM_BINARY@|${PWD}/dist/${ARTIFACT_NAME}/saki|g" \
               -e "s|@SAKI_VERSION@|${SAKI_VERSION}|g" \
               packaging/nfpm.yaml > dist/nfpm.yaml
@@ -416,10 +458,10 @@ jobs:
             saki --version
           '
 
-  prerelease:
-    name: Publish Dev Prerelease
+  publish:
+    name: Publish ${{ needs.build.outputs.release == 'true' && 'Release' || 'Dev Prerelease' }}
     needs: [build, package-smoke]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -436,67 +478,37 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # From the build job, never derived a second time: a release's tag, its
+      # artifacts and the version in its binary have to be one string.
       - id: meta
-        name: Compute prerelease metadata
+        name: Compute release metadata
         shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          RELEASE: ${{ needs.build.outputs.release }}
         run: |
           set -euo pipefail
-          compute_base_version() {
-            if [[ -n "${SAKI_BASE_VERSION:-}" ]]; then
-              printf '%s\n' "${SAKI_BASE_VERSION}"
-              return
-            fi
-            if [[ -n "${BASE_VERSION:-}" ]]; then
-              printf '%s\n' "${BASE_VERSION}"
-              return
-            fi
-
-            local fallback="${BASE_VERSION_FALLBACK:-v0.0.1}"
-            local fallback_major=0 fallback_minor=0 fallback_patch=1
-            if [[ "${fallback}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              fallback_major="${BASH_REMATCH[1]}"
-              fallback_minor="${BASH_REMATCH[2]}"
-              fallback_patch="${BASH_REMATCH[3]}"
-            fi
-
-            local best_tag="" best_count=""
-            local tag count
-            while IFS= read -r tag; do
-              [[ "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || continue
-              count="$(git rev-list --count "${tag}..HEAD" 2>/dev/null || true)"
-              [[ "${count}" =~ ^[0-9]+$ ]] || continue
-              if [[ -z "${best_count}" || "${count}" -lt "${best_count}" ]]; then
-                best_tag="${tag}"
-                best_count="${count}"
-              fi
-            done < <(git tag --merged HEAD --list 'v*' 2>/dev/null || true)
-
-            if [[ -n "${best_tag}" && "${best_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              printf 'v%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$((BASH_REMATCH[3] + best_count))"
-              return
-            fi
-
-            count="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
-            [[ "${count}" =~ ^[0-9]+$ ]] || count=0
-            printf 'v%s.%s.%s\n' "${fallback_major}" "${fallback_minor}" "$((fallback_patch + count))"
-          }
-
-          base_version="$(compute_base_version)"
-          short_sha="${GITHUB_SHA::12}"
-          branch="$(printf '%s' "${GITHUB_REF_NAME:-dev}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+|-+$//g')"
-          if [[ -z "$branch" ]]; then
-            branch="dev"
+          [ -n "$VERSION" ] || { echo "the build reported no version" >&2; exit 1; }
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [ "$RELEASE" = true ]; then
+            echo "name=Saki ${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "headline=Release ${VERSION}." >> "$GITHUB_OUTPUT"
+          else
+            echo "name=Dev prerelease ${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "channel=nightly" >> "$GITHUB_OUTPUT"
+            echo "headline=Automated prerelease build from \`dev\`." >> "$GITHUB_OUTPUT"
           fi
-          tag="${base_version}-${branch}-${short_sha}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "name=Dev prerelease ${tag}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.name }}
-          prerelease: true
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
           generate_release_notes: true
           files: |
             dist/*.tar.gz
@@ -505,7 +517,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
           body: |
-            Automated prerelease build from `dev`.
+            ${{ steps.meta.outputs.headline }}
 
             Commit: `${{ github.sha }}`
 
@@ -527,6 +539,6 @@ jobs:
             -f event_type=release-published \
             -f "client_payload[repository]=${GITHUB_REPOSITORY}" \
             -f "client_payload[tag]=${TAG}" \
-            -f "client_payload[channel]=nightly" \
+            -f "client_payload[channel]=${{ steps.meta.outputs.channel }}" \
             -f "client_payload[sha]=${GITHUB_SHA}" \
             || echo "::warning title=Package repository not notified::dispatch to ${PACKAGES_REPO} failed; its scheduled sweep is the backstop."
