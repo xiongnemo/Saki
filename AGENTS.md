@@ -40,8 +40,12 @@ number of commits since that tag. Ignore prerelease/dev tags such as
 `v0.0.1-dev-...` for this calculation.
 
 To bump major/minor or reset the patch base, create and push a new exact semver
-tag on the desired base commit, for example `v0.1.0`. The tagged commit builds
-as `v0.1.0-...`; the next commit builds as `v0.1.1-...`.
+tag on the desired base commit, for example `v0.1.0`. Pushing that tag builds and
+publishes the release: a tag build renders bare (`v0.1.0`, packages `0.1.0-1`),
+and CI refuses a tag that is not the version its commit computes. The same
+commit pushed to `dev` still builds as `v0.1.0-dev-...`; the next commit builds
+as `v0.1.1-...`. To check the release path without tagging, run Release Builds
+by hand with `rehearse_release`.
 
 Only set `SAKI_BASE_VERSION` or `BASE_VERSION` when intentionally overriding the
 automatic Git-derived base version.

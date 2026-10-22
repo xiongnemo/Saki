@@ -129,7 +129,8 @@ available as a fallback for unsupported or non-Range-capable sources.
 
 ## Release Builds
 
-Pushes to `dev` build prerelease artifacts for Linux, Windows, and macOS. The
+Pushes to `dev` build prerelease artifacts for Linux, Windows, and macOS, and
+pushing an exact `vMAJOR.MINOR.PATCH` tag publishes that version as a release. The
 workflow targets `amd64`, `arm64`, and `i686` for Linux and Windows, and
 `amd64` and `arm64` for macOS. Artifacts are published to a GitHub prerelease
 named like `v0.0.1-dev-06b7a4654205`.
@@ -162,8 +163,10 @@ tag. If no exact release tag exists, builds use `v0.0.1` as the fallback base
 and add the current commit count.
 
 To bump `major` or `minor`, create an exact semver tag on the desired base
-commit, for example `v0.1.0`. That tagged commit builds as `v0.1.0-...`; the
-next commit builds as `v0.1.1-...`. Dev prerelease tags like
+commit, for example `v0.1.0`. The tag's own build is the release and reports
+plain `v0.1.0` (packages `0.1.0-1` / `0.1.0-r1`); CI refuses a tag that is not
+the version its commit computes. Dev builds of that commit are `v0.1.0-dev-...`,
+and the next commit builds as `v0.1.1-...`. Dev prerelease tags like
 `v0.0.1-dev-06b7a4654205` are ignored for the patch calculation.
 
 ## Windows SMTC Shim

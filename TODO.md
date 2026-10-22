@@ -360,3 +360,12 @@ Status: completed.
 - [x] Package the glibc Linux builds (`amd64`, `arm64`, `i686`) as `.deb` and `.rpm` with the same nFPM template as the `.apk`.
 - [x] Depend on `libasound2t64 | libasound2` (deb) and `alsa-lib` (rpm); Ubuntu 24.04 renamed the library for the 64-bit time_t transition.
 - [x] Smoke-install on Debian stable, Ubuntu 22.04 and 24.04, Fedora, and Rocky Linux 9, next to the Alpine checks, before publishing.
+
+## Tagged Releases
+
+Status: completed.
+
+- [x] Publish an exact `vMAJOR.MINOR.PATCH` tag push as a release (not a prerelease), with the dispatch to the package repository marked `stable`.
+- [x] Render the tag build bare: `version.Release` makes `--version` report `v0.1.0`, and packages are `0.1.0-1` / `0.1.0-r1`; refuse a tag that is not the version its commit computes, or a dirty tree.
+- [x] Take the published tag and version from the build job instead of deriving them a second time in the publish job.
+- [x] Add a `rehearse_release` manual run that builds, packages and smoke-tests a release without publishing.
