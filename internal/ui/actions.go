@@ -23,6 +23,11 @@ const (
 	actionFineVolumeDown uiActionID = "fine-volume-down"
 	actionFineVolumeUp   uiActionID = "fine-volume-up"
 	actionQuit           uiActionID = "quit"
+	actionSyncLibrary    uiActionID = "sync-library"
+	actionRetryOnline    uiActionID = "retry-online"
+	actionGoOffline      uiActionID = "go-offline"
+	actionDownloadTrack  uiActionID = "download-track"
+	actionRemoveDownload uiActionID = "remove-download"
 )
 
 type uiAction struct {
@@ -43,6 +48,19 @@ func globalActions() []uiAction {
 		{id: actionSystem, title: "System", group: "Navigation", bindings: []string{"6"}, run: func(a *App) { a.showSettings(true) }},
 		{id: actionHelp, title: "Help", group: "System", bindings: []string{"?", "？"}, run: func(a *App) { a.showHelpOverlay() }},
 		{id: actionCommandPalette, title: "Command Palette", group: "System", bindings: []string{":", "："}, run: func(a *App) { a.showCommandPalette() }},
+		{id: actionSyncLibrary, title: "Sync Library", group: "Offline", bindings: []string{"u"}, run: func(a *App) { a.syncNow() }},
+		{id: actionRetryOnline, title: "Retry Online", group: "Offline", bindings: []string{"o"}, run: func(a *App) { a.retryOnlineNow() }},
+		{id: actionGoOffline, title: "Go Offline", group: "Offline", bindings: []string{"O"}, run: func(a *App) { a.goOffline() }},
+		{id: actionDownloadTrack, title: "Download Current Track", group: "Offline", bindings: []string{"d"}, run: func(a *App) {
+			if a.currentState.CurrentTrack != nil {
+				a.downloadSong(a.currentState.CurrentTrack.ID)
+			}
+		}},
+		{id: actionRemoveDownload, title: "Remove Current Download", group: "Offline", bindings: []string{"x"}, run: func(a *App) {
+			if a.currentState.CurrentTrack != nil {
+				a.removeSong(a.currentState.CurrentTrack.ID)
+			}
+		}},
 		{id: actionPlayPause, title: "Play/Pause", group: "Playback", bindings: []string{"Space"}, run: func(a *App) {
 			if a.player != nil {
 				a.runPlaybackCommand(func() { a.player.PlayPause() })

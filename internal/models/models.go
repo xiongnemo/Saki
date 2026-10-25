@@ -176,12 +176,24 @@ type Settings struct {
 	MPVPath                    string  `json:"mpvPath"`
 	CacheDir                   string  `json:"cacheDir"`
 	AudioCacheMaxBytes         int64   `json:"audioCacheMaxBytes"`
+	ConnectionMode             string  `json:"connectionMode"`
+	CatalogSyncIntervalSeconds int     `json:"catalogSyncIntervalSeconds"`
+	DownloadConcurrency        int     `json:"downloadConcurrency"`
+	OfflineStorageMaxBytes    int64   `json:"offlineStorageMaxBytes"`
+	DefaultDownloadVariant     string  `json:"defaultDownloadVariant"`
 	HealthCheckIntervalSeconds int     `json:"healthCheckIntervalSeconds"`
 	EndpointTimeoutSeconds     int     `json:"endpointTimeoutSeconds"`
 	EndpointSwitchThreshold    float64 `json:"endpointSwitchThreshold"`
 	EnablePrefetch             bool    `json:"enablePrefetch"`
 	UseBundledMPV              bool    `json:"useBundledMpv"`
 }
+
+const (
+	ConnectionModeAuto    = "auto"
+	ConnectionModeOffline = "offline"
+	DownloadVariantStream = "stream"
+	DownloadVariantRaw    = "raw"
+)
 
 type Config struct {
 	Account  Account  `json:"account"`

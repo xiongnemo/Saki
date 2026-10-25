@@ -193,7 +193,11 @@ func (c *Client) ProbeEndpoints(ctx context.Context, endpoints []models.Endpoint
 		wg.Go(func() {
 			start := time.Now()
 			info, err := c.pingEndpointInfo(ctx, endpoint.URL)
-			results[i].Latency = time.Since(start)
+			latency := time.Since(start)
+			if latency <= 0 {
+				latency = time.Nanosecond
+			}
+			results[i].Latency = latency
 			results[i].ServerVersion = info.Version
 			results[i].ServerType = info.Type
 			results[i].Err = err
@@ -537,6 +541,31 @@ func (c *Client) OpenStreamWithEndpoint(ctx context.Context, id string, rangeHea
 	return resp, c.endpointForBaseURL(fallback), nil
 }
 
+// OpenDownloadWithEndpoint opens the original, untranscoded download stream.
+// It uses the same endpoint failover policy as playback streams while leaving
+// the response body open for the caller to consume.
+func (c *Client) OpenDownloadWithEndpoint(ctx context.Context, id string, rangeHeader string) (*http.Response, models.Endpoint, error) {
+	active := c.activeBaseURL()
+	resp, err := c.openBinaryFromBase(ctx, active, "download", id, rangeHeader)
+	if err == nil {
+		c.markEndpointResult(active, 0, nil)
+		return resp, c.endpointForBaseURL(active), nil
+	}
+	c.markEndpointResult(active, 0, err)
+
+	fallback := c.fallbackBaseURL(active)
+	if fallback == "" || fallback == active {
+		return nil, c.endpointForBaseURL(active), err
+	}
+	resp, retryErr := c.openBinaryFromBase(ctx, fallback, "download", id, rangeHeader)
+	if retryErr != nil {
+		c.markEndpointResult(fallback, 0, retryErr)
+		return nil, c.endpointForBaseURL(fallback), err
+	}
+	c.markEndpointResult(fallback, 0, nil)
+	return resp, c.endpointForBaseURL(fallback), nil
+}
+
 func (c *Client) Scrobble(ctx context.Context, id string) error {
 	var wrapped response[baseResponse]
 	err := c.get(ctx, "scrobble", map[string]string{"id": id, "submission": "true"}, &wrapped)
@@ -646,6 +675,25 @@ func (c *Client) openStreamFromBase(ctx context.Context, baseURL, id string, ran
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
 		return nil, fmt.Errorf("stream returned HTTP %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
+func (c *Client) openBinaryFromBase(ctx context.Context, baseURL, endpoint, id, rangeHeader string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.buildURLAt(baseURL, endpoint, map[string]string{"id": id}), nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	resp, err := c.doWithHeaderTimeout(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, fmt.Errorf("%s returned HTTP %d", endpoint, resp.StatusCode)
 	}
 	return resp, nil
 }

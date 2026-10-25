@@ -30,6 +30,16 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Local stream proxy with playback-time buffering and completed-file audio cache.
 - Seeking support when the current backend/source can provide a seekable stream or cached file.
 - System page with About/runtime properties, popup-based Settings, endpoint validation, and live endpoint ping/status.
+- Offline library backed by a local SQLite catalog. Saki can switch to the
+  catalog automatically after an online failure, or you can use `O` for
+  Offline and `o` to Retry Online. Press `u` to refresh the catalog while
+  online.
+- Selective downloads for tracks, albums, and playlists: `d` downloads the
+  selected/current track and `D` downloads every track in an album or playlist.
+  `x` removes the current track's local variants. Stream and raw variants,
+  resumable partial files, configurable concurrency, and an independent
+  offline storage limit are available in System settings. The offline limit
+  defaults to unlimited (`0`), while downloads use two workers by default.
 - Windows SMTC integration through a small C++/WinRT DLL shim.
 - Versioned builds and `--version` / `-v` output with branch, commit, and dirty state.
 
@@ -141,14 +151,14 @@ The Linux builds also ship as packages that pull in ALSA for audio: `.deb` and
 musl builds; the regular Linux builds link glibc and do not start there.
 
 ```sh
-sudo apt install ./saki-v0.0.62-dev-<commit>-linux-amd64.deb
-sudo dnf install ./saki-v0.0.62-dev-<commit>-linux-amd64.rpm
-apk add --allow-untrusted ./saki-v0.0.62-dev-<commit>-linux-musl-amd64.apk
+sudo apt install ./saki-v0.0.63-dev-<commit>-linux-amd64.deb
+sudo dnf install ./saki-v0.0.63-dev-<commit>-linux-amd64.rpm
+apk add --allow-untrusted ./saki-v0.0.63-dev-<commit>-linux-musl-amd64.apk
 ```
 
-That build installs as version `0.0.62~pre-1` (deb, rpm) or `0.0.62_pre-r1`
+That build installs as version `0.0.63~pre-1` (deb, rpm) or `0.0.63_pre-r1`
 (apk): a package version has no room for a branch and commit, so dev builds are
-marked as a prerelease of their base version, ordered before a later `v0.0.62`
+marked as a prerelease of their base version, ordered before a later `v0.0.63`
 tag, and the full build version is in the package description.
 
 Each build embeds version metadata in this format:
@@ -194,5 +204,6 @@ the `saki_embed_smtc` tag so the DLL is embedded into `saki.exe`.
 - [go-mp3](https://github.com/hajimehoshi/go-mp3) for MP3 decoding.
 - [mewkiz/flac](https://github.com/mewkiz/flac) for FLAC decoding.
 - [saprobe-alac](https://github.com/mycophonic/saprobe-alac) for ALAC/M4A decoding.
+- [modernc.org/sqlite](https://modernc.org/sqlite) for the pure-Go offline catalog.
 - [rasterm](https://github.com/BourgeoisBear/rasterm) for terminal image protocol encoding.
 - [go-winio](https://github.com/microsoft/go-winio) for Windows named pipe support.

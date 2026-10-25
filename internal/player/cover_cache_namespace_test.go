@@ -32,13 +32,13 @@ func TestCoverCacheUsesLibraryFingerprintNamespace(t *testing.T) {
 	track := models.Song{ID: "song-1", CoverArt: "cover-1"}
 
 	// When
-	firstPath, err := service.cacheCoverArt(context.Background(), track)
+	firstPath, err := service.cacheCoverArt(context.Background(), track, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.Account.LibraryFingerprint = "library-b"
 	client.Configure(cfg)
-	secondPath, err := service.cacheCoverArt(context.Background(), track)
+	secondPath, err := service.cacheCoverArt(context.Background(), track, true)
 
 	// Then
 	if err != nil {
@@ -76,7 +76,7 @@ func TestCoverCacheUsesServingEndpointNamespaceAfterFallback(t *testing.T) {
 	fallbackPath := cachepaths.NewScope(cacheRoot, "nemo", fallback.URL, "").CoverPath("cover-1")
 
 	// When
-	path, err := service.cacheCoverArt(context.Background(), track)
+	path, err := service.cacheCoverArt(context.Background(), track, true)
 
 	// Then
 	if err != nil {

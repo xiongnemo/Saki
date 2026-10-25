@@ -60,6 +60,18 @@ func (s Scope) CoverPath(coverArtID string) string {
 	return filepath.Join(s.CoversDir(), hashString(coverArtID)+".jpg")
 }
 
+func (s Scope) CatalogDir() string {
+	return filepath.Join(s.root, "catalog", s.namespace)
+}
+
+func (s Scope) CatalogPath() string {
+	return filepath.Join(s.CatalogDir(), "library.db")
+}
+
+func (s Scope) OfflineDir() string {
+	return filepath.Join(s.root, "offline", s.namespace)
+}
+
 func hashString(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
