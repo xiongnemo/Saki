@@ -406,6 +406,23 @@ func drawPlainText(screen tcell.Screen, x, y int, text string, style tcell.Style
 	}
 }
 
+func textCellWidth(text string) int {
+	width := 0
+	state := -1
+	for len(text) > 0 {
+		cluster, rest, clusterWidth, nextState := uniseg.FirstGraphemeClusterInString(text, state)
+		if cluster == "" {
+			break
+		}
+		if clusterWidth > 0 {
+			width += clusterWidth
+		}
+		text = rest
+		state = nextState
+	}
+	return width
+}
+
 func drawStyledText(screen tcell.Screen, x, y, width int, text string, style tcell.Style) {
 	if width <= 0 {
 		return
@@ -487,7 +504,7 @@ func (v *settingsView) drawSettingsRows(screen tcell.Screen) {
 func settingLabelWidth(rows []settingRow, maxWidth int) int {
 	width := 0
 	for _, row := range rows {
-		if labelWidth := len([]rune(i18n.T(row.label))); labelWidth > width {
+		if labelWidth := textCellWidth(i18n.T(row.label)); labelWidth > width {
 			width = labelWidth
 		}
 	}
@@ -1585,9 +1602,9 @@ func connectionModeOption(value string) int {
 
 func languageOption(value string) int {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case models.LanguageEnglish:
+	case "en", "en-us", "en-gb", "english":
 		return 1
-	case models.LanguageChinese:
+	case "zh-cn", "zh", "zh_cn", "chinese":
 		return 2
 	default:
 		return 0

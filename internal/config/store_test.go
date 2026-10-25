@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/xiongnemo/saki/internal/models"
 )
 
 func TestLoadMigratesLegacyAccountURL(t *testing.T) {
@@ -36,5 +38,12 @@ func TestLoadMigratesLegacyAccountURL(t *testing.T) {
 	}
 	if cfg.Settings.AudioCacheMaxBytes <= 0 || cfg.Settings.HealthCheckIntervalSeconds <= 0 {
 		t.Fatalf("settings defaults were not applied: %#v", cfg.Settings)
+	}
+}
+
+func TestNormalizeSettingsPreservesChineseLanguageValue(t *testing.T) {
+	settings := normalizeSettings(models.Settings{Language: "zh-CN"})
+	if settings.Language != models.LanguageChinese {
+		t.Fatalf("normalized language = %q, want zh-CN", settings.Language)
 	}
 }
