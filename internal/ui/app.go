@@ -212,10 +212,10 @@ func (a *App) songStatusMarker(song models.Song) string {
 	cached, downloaded := a.localStatus(a.ctx, song.ID)
 	marker := ""
 	if cached {
-		marker += " [cyan][" + i18n.T("Cached") + "][-]"
+		marker += " [cyan]" + tview.Escape("["+i18n.T("Cached")+"]") + "[-]"
 	}
 	if downloaded {
-		marker += " [yellow][" + i18n.T("Downloaded") + "][-]"
+		marker += " [yellow]" + tview.Escape("["+i18n.T("Downloaded")+"]") + "[-]"
 	}
 	return marker
 }
