@@ -24,13 +24,13 @@ func TestSongStatusMarkerDistinguishesCacheAndDownload(t *testing.T) {
 			return false, false
 		}
 	}}
-	if got := app.songStatusMarker(models.Song{ID: "cached"}); got != " [cyan][Cached][-]" {
+	if got := app.songStatusMarker(models.Song{ID: "cached"}); got != " [cyan][Cached[][-]" {
 		t.Fatalf("cached marker = %q", got)
 	}
-	if got := app.songStatusMarker(models.Song{ID: "downloaded"}); got != " [yellow][Downloaded][-]" {
+	if got := app.songStatusMarker(models.Song{ID: "downloaded"}); got != " [yellow][Downloaded[][-]" {
 		t.Fatalf("download marker = %q", got)
 	}
-	if got := app.songStatusMarker(models.Song{ID: "both"}); got != " [cyan][Cached][-] [yellow][Downloaded][-]" {
+	if got := app.songStatusMarker(models.Song{ID: "both"}); got != " [cyan][Cached[][-] [yellow][Downloaded[][-]" {
 		t.Fatalf("combined marker = %q", got)
 	}
 	if got := app.songStatusMarker(models.Song{ID: "none"}); got != "" {

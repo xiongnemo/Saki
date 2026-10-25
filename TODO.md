@@ -10,6 +10,7 @@ Status: completed.
 - [x] Add Auto, English, and 中文 localization for the main UI and offline controls.
 - [x] Normalize the canonical `zh-CN` setting and measure Chinese labels by terminal cell width.
 - [x] Use a high-contrast download marker so cached and downloaded states remain readable.
+- [x] Escape localized marker brackets so tview renders English status labels.
 
 ## SQLite Offline Library and Selective Downloads
 
