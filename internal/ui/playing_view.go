@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/xiongnemo/saki/internal/i18n"
 	"github.com/xiongnemo/saki/internal/models"
 )
 
@@ -130,24 +131,24 @@ func drawPlayingStatus(screen tcell.Screen, x, y, width int, state models.Curren
 }
 
 func playingLeftSegments(state models.CurrentState, maxWidth int) []textSegment {
-	leftState := "Ready"
+	leftState := i18n.T("Ready")
 	stateColor := uiAccent
 	if state.Buffering {
-		leftState = "Buffering"
+		leftState = i18n.T("Buffering")
 		stateColor = uiDanger
 	}
 	leftSegments := []textSegment{
-		{text: "Stream ", color: uiMuted},
+		{text: i18n.T("Stream") + " ", color: uiMuted},
 		{text: leftState, color: stateColor},
 	}
 	switch {
 	case state.CacheReady:
 		leftSegments = append(leftSegments,
-			textSegment{text: "  Cached", color: uiAccent},
+			textSegment{text: "  " + i18n.T("Cached"), color: uiAccent},
 		)
 	case state.BufferPercentKnown:
 		leftSegments = append(leftSegments,
-			textSegment{text: "  Download ", color: uiText},
+			textSegment{text: "  " + i18n.T("Download") + " ", color: uiText},
 			textSegment{text: fmt.Sprintf("%.0f%%", state.BufferedPercent), color: uiText},
 		)
 	}
@@ -301,7 +302,7 @@ func endpointStatusLabel(state models.CurrentState, maxWidth int) string {
 	if maxWidth <= 0 || strings.TrimSpace(state.ActiveEndpoint.URL) == "" {
 		return ""
 	}
-	return compactText("Endpoint: "+endpointDisplayName(state.ActiveEndpoint), maxWidth)
+	return compactText(i18n.T("Endpoint: ")+endpointDisplayName(state.ActiveEndpoint), maxWidth)
 }
 
 func endpointDisplayName(endpoint models.Endpoint) string {

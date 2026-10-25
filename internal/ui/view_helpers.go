@@ -5,6 +5,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/xiongnemo/saki/internal/i18n"
 )
 
 type titledPrimitive interface {
@@ -15,7 +16,7 @@ type titledPrimitive interface {
 func viewTitle(parts ...string) string {
 	clean := []string{"Saki"}
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
+		part = i18n.T(strings.TrimSpace(part))
 		if part != "" {
 			clean = append(clean, part)
 		}
@@ -29,7 +30,7 @@ func setViewTitle(view titledPrimitive, parts ...string) {
 }
 
 func setPlainTitle(view titledPrimitive, title string) {
-	view.SetTitle(" " + strings.TrimSpace(title) + " ")
+	view.SetTitle(" " + i18n.T(strings.TrimSpace(title)) + " ")
 	view.SetTitleAlign(tview.AlignLeft)
 }
 

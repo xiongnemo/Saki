@@ -7,6 +7,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/xiongnemo/saki/internal/i18n"
 	"github.com/xiongnemo/saki/internal/models"
 )
 
@@ -173,9 +174,9 @@ func chooseNowPlayingLayout(width, height int) nowPlayingLayout {
 
 func (v *nowPlayingView) drawEmpty(screen tcell.Screen, x, y, width, height int) {
 	rows := []string{
-		"No track loaded",
-		"Start playback from an album, playlist, or search result.",
-		"Press Esc to return.",
+		i18n.T("No track loaded"),
+		i18n.T("Start playback from an album, playlist, or search result."),
+		i18n.T("Press Esc to return."),
 	}
 	startY := y + max(0, (height-len(rows))/2)
 	for i, row := range rows {
@@ -193,9 +194,9 @@ func (v *nowPlayingView) drawEmpty(screen tcell.Screen, x, y, width, height int)
 
 func (v *nowPlayingView) drawRatioHint(screen tcell.Screen, x, y, width, height int) {
 	rows := []string{
-		"Now Playing needs a different terminal shape.",
+		i18n.T("Now Playing needs a different terminal shape."),
 		fmt.Sprintf("Try at least %dx%d for side-cover or %dx%d for top-cover layout.", nowPlayingSideMinWidth, nowPlayingSideMinHeight, nowPlayingTopMinWidth, nowPlayingTopMinHeight),
-		"Resize the terminal or press Esc to return.",
+		i18n.T("Resize the terminal or press Esc to return."),
 	}
 	startY := y + max(0, (height-len(rows))/2)
 	for i, row := range rows {
@@ -323,7 +324,7 @@ func (v *nowPlayingView) drawTextBlock(screen tcell.Screen, rect settingsRect, a
 		row += nowPlayingButtonRows + 1
 	}
 	if v.state.LastError != "" && row < endY {
-		tview.Print(screen, "Error: "+v.state.LastError, rect.x, row, rect.width, align, uiDanger)
+		tview.Print(screen, i18n.T("Error: ")+v.state.LastError, rect.x, row, rect.width, align, uiDanger)
 	}
 }
 
@@ -358,25 +359,25 @@ func (v *nowPlayingView) drawButtonRow(screen tcell.Screen, x, y, width int, but
 }
 
 func nowPlayingButtonRowsForWidth(state models.CurrentState, width int) ([]nowPlayingButton, []nowPlayingButton) {
-	playLabel := "Play"
+	playLabel := i18n.T("Play")
 	if state.Playing {
-		playLabel = "Pause"
+		playLabel = i18n.T("Pause")
 	}
 	topRow := []nowPlayingButton{
-		{label: "Prev", action: nowPlayingActionPrevious},
+		{label: i18n.T("Prev"), action: nowPlayingActionPrevious},
 		{label: playLabel, action: nowPlayingActionPlayPause},
-		{label: "Next", action: nowPlayingActionNext},
+		{label: i18n.T("Next"), action: nowPlayingActionNext},
 	}
 	bottomRow := []nowPlayingButton{
-		{label: "Repeat: " + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
-		{label: "Shuffle: " + boolText(state.Shuffled), action: nowPlayingActionShuffle},
+		{label: i18n.T("Repeat: ") + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
+		{label: i18n.T("Shuffle: ") + boolText(state.Shuffled), action: nowPlayingActionShuffle},
 	}
 	if buttonRowWidth(topRow) <= width && buttonRowWidth(bottomRow) <= width {
 		return topRow, bottomRow
 	}
 	return topRow, []nowPlayingButton{
-		{label: "Rep:" + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
-		{label: "Shuf:" + boolText(state.Shuffled), action: nowPlayingActionShuffle},
+		{label: i18n.T("Rep:") + state.RepeatStatus.String(), action: nowPlayingActionRepeat},
+		{label: i18n.T("Shuf:") + boolText(state.Shuffled), action: nowPlayingActionShuffle},
 	}
 }
 
@@ -406,7 +407,7 @@ func drawNowPlayingButton(screen tcell.Screen, rect settingsRect, label string, 
 
 func metadataLine(track *models.Song) string {
 	if track == nil {
-		return "Unknown - Unknown"
+		return i18n.T("Unknown") + " - " + i18n.T("Unknown")
 	}
 	return fallbackNowPlayingText(track.Artist) + " - " + fallbackNowPlayingText(track.Album)
 }
@@ -414,7 +415,7 @@ func metadataLine(track *models.Song) string {
 func fallbackNowPlayingText(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "Unknown"
+		return i18n.T("Unknown")
 	}
 	return value
 }
@@ -442,7 +443,7 @@ func scrollingText(text string, width, offset int) string {
 func nowPlayingStreamAudioLine(state models.CurrentState, width int) string {
 	status := playingLeftText(state, width)
 	if status == "" {
-		return "Stream Ready"
+		return i18n.T("Stream") + " " + i18n.T("Ready")
 	}
 	return status
 }

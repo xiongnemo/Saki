@@ -1,5 +1,14 @@
 # TODO
 
+## Offline Status, Startup Sync, and UI Localization
+
+Status: completed.
+
+- [x] Delay catalog sync and health checks until the first online connection succeeds.
+- [x] Add a persistent status line for download, cache, sync, and connection notifications.
+- [x] Refresh visible song lists when local cache or download files complete.
+- [x] Add Auto, English, and 中文 localization for the main UI and offline controls.
+
 ## SQLite Offline Library and Selective Downloads
 
 Status: completed.

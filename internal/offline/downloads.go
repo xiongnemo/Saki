@@ -17,13 +17,14 @@ import (
 type OpenVariant func(context.Context, string, string, string) (*http.Response, string, error)
 
 type DownloadManager struct {
-	store    *Store
-	root     string
-	maxBytes int64
-	open     OpenVariant
-	sem      chan struct{}
-	mu       sync.Mutex
-	active   map[string]struct{}
+	store      *Store
+	root       string
+	maxBytes   int64
+	open       OpenVariant
+	sem        chan struct{}
+	mu         sync.Mutex
+	active     map[string]struct{}
+	onComplete func(string, string)
 }
 
 func NewDownloadManager(store *Store, root string, maxBytes int64, concurrency int, open OpenVariant) *DownloadManager {
@@ -46,6 +47,12 @@ func (m *DownloadManager) SetStore(store *Store, root string) {
 	m.mu.Lock()
 	m.store = store
 	m.root = root
+	m.mu.Unlock()
+}
+
+func (m *DownloadManager) SetOnComplete(callback func(songID, variant string)) {
+	m.mu.Lock()
+	m.onComplete = callback
 	m.mu.Unlock()
 }
 
@@ -213,7 +220,16 @@ func (m *DownloadManager) Download(ctx context.Context, songID, variant string, 
 	}
 	completed := time.Now().UTC()
 	record := Download{SongID: songID, Variant: variant, Status: "complete", Pinned: pinned, Path: path, Bytes: bytes, ContentType: resp.Header.Get("Content-Type"), SHA256: hex.EncodeToString(hash.Sum(nil)), SourceEndpoint: endpoint, Attempts: previous.Attempts, UpdatedAt: completed, CompletedAt: completed}
-	return store.UpsertDownload(ctx, record)
+	if err := store.UpsertDownload(ctx, record); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	onComplete := m.onComplete
+	m.mu.Unlock()
+	if onComplete != nil {
+		onComplete(songID, variant)
+	}
+	return nil
 }
 
 func (m *DownloadManager) Path(ctx context.Context, songID, variant string) (string, bool) {

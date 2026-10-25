@@ -23,14 +23,30 @@ type Proxy struct {
 	client   *subsonic.Client
 	settings models.Settings
 
-	mu        sync.Mutex
-	inflight  map[string]*sync.Mutex
-	cacheJobs map[string]struct{}
-	server    *http.Server
-	listener  net.Listener
-	baseURL   string
-	maxBytes  int64
-	ctx       context.Context
+	mu              sync.Mutex
+	inflight        map[string]*sync.Mutex
+	cacheJobs       map[string]struct{}
+	server          *http.Server
+	listener        net.Listener
+	baseURL         string
+	maxBytes        int64
+	ctx             context.Context
+	onCacheComplete func(string)
+}
+
+func (p *Proxy) SetOnCacheComplete(callback func(trackID string)) {
+	p.mu.Lock()
+	p.onCacheComplete = callback
+	p.mu.Unlock()
+}
+
+func (p *Proxy) notifyCacheComplete(trackID string) {
+	p.mu.Lock()
+	callback := p.onCacheComplete
+	p.mu.Unlock()
+	if callback != nil {
+		callback(trackID)
+	}
 }
 
 func New(client *subsonic.Client, settings models.Settings) *Proxy {
@@ -139,6 +155,7 @@ func (p *Proxy) EnsureCached(ctx context.Context, id string) (string, error) {
 		_ = os.Remove(partialPath)
 		return "", err
 	}
+	p.notifyCacheComplete(id)
 	_ = p.prune()
 	return cachePath, nil
 }
@@ -255,6 +272,7 @@ func (p *Proxy) proxyAndCache(w http.ResponseWriter, r *http.Request, id string)
 	closeErr := partial.Close()
 	if copyErr == nil && closeErr == nil {
 		if err := os.Rename(partialPath, cachePath); err == nil {
+			p.notifyCacheComplete(id)
 			_ = p.prune()
 			return
 		}

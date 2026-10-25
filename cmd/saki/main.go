@@ -66,6 +66,8 @@ func runTUI() error {
 	var cfgMu sync.RWMutex
 	var healthMu sync.Mutex
 	healthStarted := false
+	var onlineStateMu sync.Mutex
+	onlineEstablished := false
 	startHealthChecks := func() {
 		healthMu.Lock()
 		defer healthMu.Unlock()
@@ -74,9 +76,6 @@ func runTUI() error {
 		}
 		client.StartHealthChecks(ctx)
 		healthStarted = true
-	}
-	if cfg.Settings.ConnectionMode != models.ConnectionModeOffline {
-		startHealthChecks()
 	}
 	activeEndpoint := client.ActiveEndpoint()
 	catalogStore, err := offline.Open(cfg.Settings.CacheDir, cfg.Account.Username, activeEndpoint.URL, cfg.Account.LibraryFingerprint)
@@ -158,7 +157,10 @@ func runTUI() error {
 		_ = proxy.UpdateSettings(next.Settings)
 		downloads.SetMaxBytes(next.Settings.OfflineStorageMaxBytes)
 		router.SetConfiguredMode(next.Settings.ConnectionMode)
-		if next.Settings.ConnectionMode != models.ConnectionModeOffline {
+		onlineStateMu.Lock()
+		ready := onlineEstablished
+		onlineStateMu.Unlock()
+		if ready && next.Settings.ConnectionMode != models.ConnectionModeOffline {
 			startHealthChecks()
 		}
 		musicPlayer.SetCacheRoot(next.Settings.CacheDir)
@@ -175,6 +177,8 @@ func runTUI() error {
 		downloaded := downloads.HasAny(statusCtx, id)
 		return cached, downloaded
 	})
+	downloads.SetOnComplete(func(string, string) { app.NotifyDownloadComplete() })
+	proxy.SetOnCacheComplete(func(string) { app.NotifyCacheComplete() })
 	syncCatalog := func(syncCtx context.Context) error {
 		syncMu.Lock()
 		defer syncMu.Unlock()
@@ -183,13 +187,39 @@ func runTUI() error {
 		}
 		return offline.Sync(syncCtx, client, catalogStore, nil)
 	}
+	var syncLoopMu sync.Mutex
+	syncLoopStarted := false
+	startSyncLoop := func() {
+		syncLoopMu.Lock()
+		defer syncLoopMu.Unlock()
+		if syncLoopStarted {
+			return
+		}
+		syncLoopStarted = true
+		go syncLoop(ctx, func() models.Settings {
+			cfgMu.RLock()
+			defer cfgMu.RUnlock()
+			return cfg.Settings
+		}, router, syncCatalog, catalogStore)
+	}
+	app.SetOnlineReady(func() {
+		onlineStateMu.Lock()
+		onlineEstablished = true
+		onlineStateMu.Unlock()
+		startHealthChecks()
+		startSyncLoop()
+	})
 	app.SetOfflineActions(
 		syncCatalog,
 		func(retryCtx context.Context) error {
 			if err := router.RetryOnline(retryCtx); err != nil {
 				return err
 			}
+			onlineStateMu.Lock()
+			onlineEstablished = true
+			onlineStateMu.Unlock()
 			startHealthChecks()
+			startSyncLoop()
 			return nil
 		},
 		func(downloadCtx context.Context, id, variant string) error {
@@ -197,13 +227,6 @@ func runTUI() error {
 		},
 		catalogStore.RemoveDownload,
 	)
-	if cfg.Account.Username != "" && len(cfg.Account.Endpoints) > 0 {
-		go syncLoop(ctx, func() models.Settings {
-			cfgMu.RLock()
-			defer cfgMu.RUnlock()
-			return cfg.Settings
-		}, router, syncCatalog, catalogStore)
-	}
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("run TUI: %w", err)
 	}
@@ -211,6 +234,13 @@ func runTUI() error {
 }
 
 func syncLoop(ctx context.Context, settings func() models.Settings, router *offline.Router, syncCatalog func(context.Context) error, store *offline.Store) {
+	initialDelay := time.NewTimer(1500 * time.Millisecond)
+	select {
+	case <-initialDelay.C:
+	case <-ctx.Done():
+		initialDelay.Stop()
+		return
+	}
 	if !router.IsOffline() {
 		if err := syncCatalog(ctx); err != nil && store != nil && router.HasOfflineData(ctx) {
 			router.SetOffline()

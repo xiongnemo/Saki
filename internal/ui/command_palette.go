@@ -5,6 +5,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/xiongnemo/saki/internal/i18n"
 )
 
 const commandPalettePageName = "command-palette"
@@ -149,7 +150,7 @@ func (p *commandPalette) applyFilter(query string) {
 		}
 		action := action
 		p.filtered = append(p.filtered, action)
-		p.list.AddItem(action.title, action.group+"  "+strings.Join(action.bindings, ", "), 0, nil)
+		p.list.AddItem(i18n.T(action.title), i18n.T(action.group)+"  "+strings.Join(action.bindings, ", "), 0, nil)
 	}
 	if p.list.GetItemCount() > 0 {
 		p.list.SetCurrentItem(0)
