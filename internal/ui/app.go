@@ -215,7 +215,7 @@ func (a *App) songStatusMarker(song models.Song) string {
 		marker += " [cyan][" + i18n.T("Cached") + "][-]"
 	}
 	if downloaded {
-		marker += " [green][" + i18n.T("Downloaded") + "][-]"
+		marker += " [yellow][" + i18n.T("Downloaded") + "][-]"
 	}
 	return marker
 }

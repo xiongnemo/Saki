@@ -8,6 +8,8 @@ Status: completed.
 - [x] Add a persistent status line for download, cache, sync, and connection notifications.
 - [x] Refresh visible song lists when local cache or download files complete.
 - [x] Add Auto, English, and 中文 localization for the main UI and offline controls.
+- [x] Normalize the canonical `zh-CN` setting and measure Chinese labels by terminal cell width.
+- [x] Use a high-contrast download marker so cached and downloaded states remain readable.
 
 ## SQLite Offline Library and Selective Downloads
 
