@@ -170,6 +170,11 @@ func runTUI() error {
 
 	app := ui.New(ctx, cancel, cfgStore, cfg, client, musicPlayer, media, applyConfig)
 	app.SetOfflineRouter(router)
+	app.SetLocalStatus(func(statusCtx context.Context, id string) (bool, bool) {
+		_, cached := proxy.CachedPath(id)
+		downloaded := downloads.HasAny(statusCtx, id)
+		return cached, downloaded
+	})
 	syncCatalog := func(syncCtx context.Context) error {
 		syncMu.Lock()
 		defer syncMu.Unlock()

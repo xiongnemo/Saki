@@ -40,6 +40,9 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
   resumable partial files, configurable concurrency, and an independent
   offline storage limit are available in System settings. The offline limit
   defaults to unlimited (`0`), while downloads use two workers by default.
+- Song lists show `[已缓存]` for the playback cache and `[已下载]` for a
+  selected offline file; the labels remain visible when terminal colors are
+  unavailable.
 - Windows SMTC integration through a small C++/WinRT DLL shim.
 - Versioned builds and `--version` / `-v` output with branch, commit, and dirty state.
 
