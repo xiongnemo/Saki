@@ -94,6 +94,7 @@ type App struct {
 	retryOnline        func(context.Context) error
 	downloadTrack      func(context.Context, string, string) error
 	removeDownload     func(context.Context, string, string) error
+	localStatus        func(context.Context, string) (cached bool, downloaded bool)
 
 	historyMu sync.Mutex
 	history   []func()
@@ -149,6 +150,25 @@ func (a *App) SetOfflineActions(syncCatalog func(context.Context) error, retryOn
 	a.retryOnline = retryOnline
 	a.downloadTrack = downloadTrack
 	a.removeDownload = removeDownload
+}
+
+func (a *App) SetLocalStatus(status func(context.Context, string) (cached bool, downloaded bool)) {
+	a.localStatus = status
+}
+
+func (a *App) songStatusMarker(song models.Song) string {
+	if a.localStatus == nil {
+		return ""
+	}
+	cached, downloaded := a.localStatus(a.ctx, song.ID)
+	marker := ""
+	if cached {
+		marker += " [cyan][已缓存][-]"
+	}
+	if downloaded {
+		marker += " [green][已下载][-]"
+	}
+	return marker
 }
 
 func (a *App) syncNow() {
@@ -545,13 +565,23 @@ func (a *App) handleGlobalRuneShortcut(r rune) bool {
 	case 'O':
 		a.goOffline()
 	case 'd':
+		if a.focusTarget == appFocusContent {
+			return false
+		}
 		if a.currentState.CurrentTrack != nil {
 			a.downloadSong(a.currentState.CurrentTrack.ID)
+			return true
 		}
+		return false
 	case 'x':
+		if a.focusTarget == appFocusContent {
+			return false
+		}
 		if a.currentState.CurrentTrack != nil {
 			a.removeSong(a.currentState.CurrentTrack.ID)
+			return true
 		}
+		return false
 	case ';':
 		a.runPlaybackCommand(func() { a.player.Previous() })
 	case '\'':
@@ -614,6 +644,14 @@ func (a *App) handleNowPlayingKey(event *tcell.EventKey) bool {
 			a.handleNowPlayingAction(nowPlayingActionRepeat)
 		case event.Rune() == 's':
 			a.handleNowPlayingAction(nowPlayingActionShuffle)
+		case event.Rune() == 'd':
+			if a.currentState.CurrentTrack != nil {
+				a.downloadSong(a.currentState.CurrentTrack.ID)
+			}
+		case event.Rune() == 'x':
+			if a.currentState.CurrentTrack != nil {
+				a.removeSong(a.currentState.CurrentTrack.ID)
+			}
 		case event.Rune() == ',' && a.player != nil:
 			a.runPlaybackCommand(func() { a.player.Seek(-10, true) })
 		case event.Rune() == '.' && a.player != nil:
@@ -1058,7 +1096,7 @@ func (a *App) showAlbumAt(id string, push bool, selected int) {
 			setViewTitle(list, "Artists", album.Artist, "Albums", album.Name)
 			for i, song := range album.Songs {
 				i, song := i, song
-				list.AddItem(fmt.Sprintf("%02d - %s [%s]", song.Track, song.Title, models.SecondsAsMMSS(song.Duration)), "", 0, func() {
+				list.AddItem(fmt.Sprintf("%02d - %s [%s]", song.Track, song.Title, models.SecondsAsMMSS(song.Duration))+a.songStatusMarker(song), "", 0, func() {
 					go a.report(a.player.PlayAlbum(a.ctx, album.ID, i))
 				})
 			}
@@ -1150,7 +1188,7 @@ func (a *App) showPlaylistAt(id string, push bool, selected int) {
 			setViewTitle(list, "Playlists", playlist.Name)
 			for i, song := range playlist.Entries {
 				i, song := i, song
-				list.AddItem(fmt.Sprintf("%s :: %s [%s]", song.Title, song.Artist, models.SecondsAsMMSS(song.Duration)), "", 0, func() {
+				list.AddItem(fmt.Sprintf("%s :: %s [%s]", song.Title, song.Artist, models.SecondsAsMMSS(song.Duration))+a.songStatusMarker(song), "", 0, func() {
 					go a.report(a.player.PlayPlaylist(a.ctx, playlist.ID, i))
 				})
 			}
@@ -1268,7 +1306,7 @@ func (a *App) renderSearchResults(query string, result models.SearchResult, focu
 		songsList = list
 		for _, song := range result.Songs {
 			song := song
-			list.AddItem(song.Artist+" :: "+song.Album+" :: "+song.Title, "", 0, func() {
+			list.AddItem(song.Artist+" :: "+song.Album+" :: "+song.Title+a.songStatusMarker(song), "", 0, func() {
 				go a.report(a.player.PlayRadio(a.ctx, song.ID))
 			})
 		}
@@ -1489,7 +1527,7 @@ func (a *App) renderState(state models.CurrentState) {
 		if i == state.CurrentTrackIndex {
 			prefix = "> "
 		}
-		a.queue.AddItem(prefix+song.Title+" ["+models.SecondsAsMMSS(song.Duration)+"]", "", 0, nil)
+		a.queue.AddItem(prefix+song.Title+" ["+models.SecondsAsMMSS(song.Duration)+"]"+a.songStatusMarker(song), "", 0, nil)
 	}
 	if queueFocused {
 		setListCurrentItem(a.queue, queueSelection)
