@@ -5,6 +5,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/xiongnemo/saki/internal/i18n"
 )
 
 const helpOverlayPageName = "help-overlay"
@@ -46,7 +47,7 @@ func (h *helpOverlay) Draw(screen tcell.Screen) {
 	innerX := panelX + 2
 	innerY := panelY + 1
 	innerWidth := max(1, panelWidth-4)
-	drawStyledText(screen, innerX, innerY, innerWidth, "Global commands", tcell.StyleDefault.Foreground(uiTitle).Background(uiBackground).Bold(true))
+	drawStyledText(screen, innerX, innerY, innerWidth, i18n.T("Global commands"), tcell.StyleDefault.Foreground(uiTitle).Background(uiBackground).Bold(true))
 
 	row := innerY + 1
 	for _, action := range h.actions {
@@ -54,15 +55,15 @@ func (h *helpOverlay) Draw(screen tcell.Screen) {
 			break
 		}
 		binding := strings.Join(action.bindings, ", ")
-		line := action.group + "  " + action.title
+		line := i18n.T(action.group) + "  " + i18n.T(action.title)
 		if binding != "" {
-			line = action.group + "  " + binding + "  " + action.title
+			line = i18n.T(action.group) + "  " + binding + "  " + i18n.T(action.title)
 		}
 		drawStyledText(screen, innerX, row, innerWidth, line, tcell.StyleDefault.Foreground(uiText).Background(uiBackground))
 		row++
 	}
 
-	hint := "Esc / Backspace / ? / ？ close"
+	hint := i18n.T("Esc / Backspace / ? / ？ close")
 	drawStyledText(screen, innerX, panelY+panelHeight-2, innerWidth, hint, tcell.StyleDefault.Foreground(uiMuted).Background(uiBackground))
 }
 

@@ -43,6 +43,9 @@ Saki is a cross-platform Subsonic Audio Klient for Individuals. It's a terminal-
 - Song lists show `[已缓存]` for the playback cache and `[已下载]` for a
   selected offline file; the labels remain visible when terminal colors are
   unavailable.
+- UI language can be selected as Auto, English, or 中文 in System settings.
+- A persistent status line reports download, cache, sync, and connection events;
+  song list markers refresh when local files finish.
 - Windows SMTC integration through a small C++/WinRT DLL shim.
 - Versioned builds and `--version` / `-v` output with branch, commit, and dirty state.
 

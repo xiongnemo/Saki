@@ -15,6 +15,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/rivo/uniseg"
+	"github.com/xiongnemo/saki/internal/i18n"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
 	"github.com/xiongnemo/saki/internal/version"
@@ -41,6 +42,8 @@ var connectionModeLabels = []string{"Auto", "Offline"}
 var connectionModeValues = []string{models.ConnectionModeAuto, models.ConnectionModeOffline}
 var downloadVariantLabels = []string{"Stream", "Raw"}
 var downloadVariantValues = []string{models.DownloadVariantStream, models.DownloadVariantRaw}
+var languageLabels = []string{"Auto", "English", "中文"}
+var languageValues = []string{models.LanguageAuto, models.LanguageEnglish, models.LanguageChinese}
 
 type settingsRect struct {
 	x, y, width, height int
@@ -126,7 +129,7 @@ func newSettingsView(app *App, cfg models.Config) *settingsView {
 	setPlainTitle(view.status, " Endpoint Ping ")
 
 	view.refreshSettingsList()
-	view.setStatusText(view.statusText("", view.cfg.Account.Endpoints, nil, false, "Waiting to ping."))
+	view.setStatusText(view.statusText("", view.cfg.Account.Endpoints, nil, false, i18n.T("Waiting to ping.")))
 	return view
 }
 
@@ -136,8 +139,21 @@ func (v *settingsView) refreshSettingsList() {
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Endpoints", value: endpointSummary(v.cfg.Account.Endpoints), action: func() {
 		v.openEndpointPopup()
 	}})
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Language", value: languageLabel(v.settings.Language), action: func() {
+		v.openChoicePopup("Language", localizedChoices(languageLabels), languageOption(v.settings.Language), func(index int) error {
+			if index < 0 || index >= len(languageValues) {
+				return errors.New("invalid language")
+			}
+			v.settings.Language = languageValues[index]
+			if v.app != nil {
+				v.app.setLocale(v.settings.Language)
+			}
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Connection mode", value: connectionModeLabel(v.settings.ConnectionMode), action: func() {
-		v.openChoicePopup("Connection mode", connectionModeLabels, connectionModeOption(v.settings.ConnectionMode), func(index int) error {
+		v.openChoicePopup(i18n.T("Connection mode"), localizedChoices(connectionModeLabels), connectionModeOption(v.settings.ConnectionMode), func(index int) error {
 			if index < 0 || index >= len(connectionModeValues) {
 				return errors.New("invalid connection mode")
 			}
@@ -190,7 +206,7 @@ func (v *settingsView) refreshSettingsList() {
 		})
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Download variant", value: downloadVariantLabel(v.settings.DefaultDownloadVariant), action: func() {
-		v.openChoicePopup("Download variant", downloadVariantLabels, downloadVariantOption(v.settings.DefaultDownloadVariant), func(index int) error {
+		v.openChoicePopup(i18n.T("Download variant"), localizedChoices(downloadVariantLabels), downloadVariantOption(v.settings.DefaultDownloadVariant), func(index int) error {
 			if index < 0 || index >= len(downloadVariantValues) {
 				return errors.New("invalid download variant")
 			}
@@ -210,7 +226,7 @@ func (v *settingsView) refreshSettingsList() {
 		}
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Audio backend", value: fallbackText(v.settings.AudioBackend, "auto"), action: func() {
-		v.openChoicePopup("Audio backend", audioBackendLabels, audioBackendOption(v.settings.AudioBackend), func(index int) error {
+		v.openChoicePopup(i18n.T("Audio backend"), localizedChoices(audioBackendLabels), audioBackendOption(v.settings.AudioBackend), func(index int) error {
 			if index < 0 || index >= len(audioBackendValues) {
 				return errors.New("invalid audio backend")
 			}
@@ -271,14 +287,14 @@ func (v *settingsView) refreshSettingsList() {
 		})
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Prefetch", value: onOffOptions[boolOption(v.settings.EnablePrefetch)], action: func() {
-		v.openChoicePopup("Prefetch", onOffOptions, boolOption(v.settings.EnablePrefetch), func(index int) error {
+		v.openChoicePopup(i18n.T("Prefetch"), localizedChoices(onOffOptions), boolOption(v.settings.EnablePrefetch), func(index int) error {
 			v.settings.EnablePrefetch = index == 1
 			v.refreshSettingsList()
 			return nil
 		})
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Bundled mpv", value: onOffOptions[boolOption(v.settings.UseBundledMPV)], action: func() {
-		v.openChoicePopup("Bundled mpv", onOffOptions, boolOption(v.settings.UseBundledMPV), func(index int) error {
+		v.openChoicePopup(i18n.T("Bundled mpv"), localizedChoices(onOffOptions), boolOption(v.settings.UseBundledMPV), func(index int) error {
 			v.settings.UseBundledMPV = index == 1
 			v.refreshSettingsList()
 			return nil
@@ -459,19 +475,19 @@ func (v *settingsView) drawSettingsRows(screen tcell.Screen) {
 			labelStyle = labelStyle.Bold(true)
 			valueStyle = valueStyle.Bold(true)
 		}
-		drawStyledText(screen, rect.x, y, labelWidth, row.label, labelStyle)
+		drawStyledText(screen, rect.x, y, labelWidth, i18n.T(row.label), labelStyle)
 		value := strings.TrimSpace(row.value)
 		if value == "" {
 			value = "(empty)"
 		}
-		drawStyledText(screen, rect.x+labelWidth, y, rect.width-labelWidth, value, valueStyle)
+		drawStyledText(screen, rect.x+labelWidth, y, rect.width-labelWidth, i18n.T(value), valueStyle)
 	}
 }
 
 func settingLabelWidth(rows []settingRow, maxWidth int) int {
 	width := 0
 	for _, row := range rows {
-		if labelWidth := len([]rune(row.label)); labelWidth > width {
+		if labelWidth := len([]rune(i18n.T(row.label))); labelWidth > width {
 			width = labelWidth
 		}
 	}
@@ -790,7 +806,7 @@ func (p *systemTextPopup) Draw(screen tcell.Screen) {
 
 	innerX := popupX + 2
 	innerWidth := max(1, popupWidth-4)
-	drawStyledText(screen, innerX, popupY+1, innerWidth, p.label, tcell.StyleDefault.Foreground(uiLabel).Background(uiBackground))
+	drawStyledText(screen, innerX, popupY+1, innerWidth, i18n.T(p.label), tcell.StyleDefault.Foreground(uiLabel).Background(uiBackground))
 
 	textHeight := max(1, popupHeight-6)
 	p.textRect = settingsRect{x: innerX, y: popupY + 2, width: innerWidth, height: textHeight}
@@ -800,9 +816,9 @@ func (p *systemTextPopup) Draw(screen tcell.Screen) {
 	buttonY := popupY + popupHeight - 2
 	p.saveRect = settingsRect{x: innerX, y: buttonY, width: 8, height: 1}
 	p.cancelRect = settingsRect{x: innerX + 10, y: buttonY, width: 10, height: 1}
-	drawStyledText(screen, p.saveRect.x, p.saveRect.y, p.saveRect.width, " Save ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent).Bold(true))
-	drawStyledText(screen, p.cancelRect.x, p.cancelRect.y, p.cancelRect.width, " Cancel ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent))
-	help := "F2 save | Esc close"
+	drawStyledText(screen, p.saveRect.x, p.saveRect.y, p.saveRect.width, " "+i18n.T("Save")+" ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent).Bold(true))
+	drawStyledText(screen, p.cancelRect.x, p.cancelRect.y, p.cancelRect.width, " "+i18n.T("Cancel")+" ", tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(uiAccent))
+	help := i18n.T("F2 save | Esc close")
 	if p.message != "" {
 		help = p.message
 	}
@@ -910,7 +926,7 @@ func (v *settingsView) openChoicePopup(label string, options []string, current i
 	form.AddDropDown(label, options, current, func(_ string, index int) {
 		selected = index
 	})
-	form.AddButton("OK", func() {
+	form.AddButton(i18n.T("OK"), func() {
 		if accept != nil {
 			if err := accept(selected); err != nil {
 				v.setStatusText(v.statusText("Invalid value: "+err.Error(), v.cfg.Account.Endpoints, nil, false, ""))
@@ -919,7 +935,7 @@ func (v *settingsView) openChoicePopup(label string, options []string, current i
 		}
 		v.closePopup()
 	})
-	form.AddButton("Cancel", func() {
+	form.AddButton(i18n.T("Cancel"), func() {
 		v.closePopup()
 	})
 	form.SetCancelFunc(func() {
@@ -930,7 +946,7 @@ func (v *settingsView) openChoicePopup(label string, options []string, current i
 	form.SetBorder(true)
 	form.SetBorderColor(uiBorder)
 	form.SetTitleColor(uiTitle)
-	setPlainTitle(form, "Choose "+label)
+	setPlainTitle(form, i18n.T("Choose ")+label)
 	form.SetFocus(0)
 	v.showPopup(center(form, 52, 7), nil)
 }
@@ -1064,7 +1080,7 @@ func (v *settingsView) startProbeNow(message string) {
 func (v *settingsView) startProbe(message string, delay time.Duration) {
 	endpoints := cloneEndpoints(v.cfg.Account.Endpoints)
 	if v.settings.ConnectionMode == models.ConnectionModeOffline {
-		v.setStatusText(v.statusText(message, endpoints, nil, false, "Offline mode; endpoint ping skipped."))
+		v.setStatusText(v.statusText(message, endpoints, nil, false, i18n.T("Offline mode; endpoint ping skipped.")))
 		return
 	}
 	if v.app == nil || v.app.client == nil {
@@ -1565,6 +1581,29 @@ func connectionModeOption(value string) int {
 		return 1
 	}
 	return 0
+}
+
+func languageOption(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case models.LanguageEnglish:
+		return 1
+	case models.LanguageChinese:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func languageLabel(value string) string {
+	return i18n.T(languageLabels[languageOption(value)])
+}
+
+func localizedChoices(values []string) []string {
+	choices := make([]string, len(values))
+	for i, value := range values {
+		choices[i] = i18n.T(value)
+	}
+	return choices
 }
 
 func connectionModeLabel(value string) string {

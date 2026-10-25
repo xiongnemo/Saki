@@ -111,6 +111,14 @@ func normalizeAccount(account models.Account) models.Account {
 }
 
 func normalizeSettings(settings models.Settings) models.Settings {
+	switch strings.ToLower(strings.TrimSpace(settings.Language)) {
+	case models.LanguageChinese, "zh", "zh_cn", "chinese":
+		settings.Language = models.LanguageChinese
+	case models.LanguageEnglish, "en-us", "en-gb", "english":
+		settings.Language = models.LanguageEnglish
+	default:
+		settings.Language = models.LanguageAuto
+	}
 	switch strings.ToLower(strings.TrimSpace(settings.AudioBackend)) {
 	case "", "auto":
 		settings.AudioBackend = "auto"

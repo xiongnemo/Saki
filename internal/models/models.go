@@ -172,6 +172,7 @@ type Endpoint struct {
 }
 
 type Settings struct {
+	Language                   string  `json:"language"`
 	AudioBackend               string  `json:"audioBackend"`
 	MPVPath                    string  `json:"mpvPath"`
 	CacheDir                   string  `json:"cacheDir"`
@@ -179,7 +180,7 @@ type Settings struct {
 	ConnectionMode             string  `json:"connectionMode"`
 	CatalogSyncIntervalSeconds int     `json:"catalogSyncIntervalSeconds"`
 	DownloadConcurrency        int     `json:"downloadConcurrency"`
-	OfflineStorageMaxBytes    int64   `json:"offlineStorageMaxBytes"`
+	OfflineStorageMaxBytes     int64   `json:"offlineStorageMaxBytes"`
 	DefaultDownloadVariant     string  `json:"defaultDownloadVariant"`
 	HealthCheckIntervalSeconds int     `json:"healthCheckIntervalSeconds"`
 	EndpointTimeoutSeconds     int     `json:"endpointTimeoutSeconds"`
@@ -189,6 +190,9 @@ type Settings struct {
 }
 
 const (
+	LanguageAuto          = "auto"
+	LanguageEnglish       = "en"
+	LanguageChinese       = "zh-CN"
 	ConnectionModeAuto    = "auto"
 	ConnectionModeOffline = "offline"
 	DownloadVariantStream = "stream"

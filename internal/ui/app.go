@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/xiongnemo/saki/internal/config"
+	"github.com/xiongnemo/saki/internal/i18n"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/offline"
@@ -70,6 +71,7 @@ type App struct {
 	queue   *tview.List
 	cover   *coverPreview
 	status  *playingView
+	notice  *tview.TextView
 	playing *nowPlayingView
 	help    *tview.TextView
 
@@ -95,6 +97,8 @@ type App struct {
 	downloadTrack      func(context.Context, string, string) error
 	removeDownload     func(context.Context, string, string) error
 	localStatus        func(context.Context, string) (cached bool, downloaded bool)
+	onlineReady        func()
+	visibleRefresh     func()
 
 	historyMu sync.Mutex
 	history   []func()
@@ -121,6 +125,7 @@ type searchFocusTarget struct {
 
 func New(ctx context.Context, cancel context.CancelFunc, store config.Store, cfg models.Config, client *subsonic.Client, player *player.Service, media mediaintegration.MediaIntegration, applyConfig func(models.Config) models.Config) *App {
 	configureTheme()
+	i18n.SetCurrent(cfg.Settings.Language)
 	app := &App{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -136,6 +141,13 @@ func New(ctx context.Context, cancel context.CancelFunc, store config.Store, cfg
 	}
 	app.app.SetMouseCapture(app.handleMouseCapture)
 	return app
+}
+
+func (a *App) setLocale(language string) {
+	i18n.SetCurrent(language)
+	if a.help != nil {
+		a.help.SetText(tview.Escape(localizedControlsHelpText()))
+	}
 }
 
 func (a *App) SetOfflineRouter(router *offline.Router) {
@@ -156,6 +168,43 @@ func (a *App) SetLocalStatus(status func(context.Context, string) (cached bool, 
 	a.localStatus = status
 }
 
+func (a *App) SetOnlineReady(callback func()) {
+	a.onlineReady = callback
+}
+
+func (a *App) NotifyLocalStatusChanged() {
+	a.notifyLocalStatusChanged("")
+}
+
+func (a *App) NotifyDownloadComplete() {
+	a.notifyLocalStatusChanged("Download complete")
+}
+
+func (a *App) NotifyCacheComplete() {
+	a.notifyLocalStatusChanged("Cache complete")
+}
+
+func (a *App) notifyLocalStatusChanged(message string) {
+	if a.app == nil {
+		return
+	}
+	a.app.QueueUpdateDraw(func() {
+		if a.visibleRefresh != nil {
+			a.visibleRefresh()
+		}
+		if a.currentState.CurrentTrack != nil {
+			a.renderState(a.currentState)
+		}
+		if message != "" {
+			a.setNotice(message)
+		}
+	})
+}
+
+func (a *App) setVisibleRefresh(refresh func()) {
+	a.visibleRefresh = refresh
+}
+
 func (a *App) songStatusMarker(song models.Song) string {
 	if a.localStatus == nil {
 		return ""
@@ -163,12 +212,23 @@ func (a *App) songStatusMarker(song models.Song) string {
 	cached, downloaded := a.localStatus(a.ctx, song.ID)
 	marker := ""
 	if cached {
-		marker += " [cyan][已缓存][-]"
+		marker += " [cyan][" + i18n.T("Cached") + "][-]"
 	}
 	if downloaded {
-		marker += " [green][已下载][-]"
+		marker += " [green][" + i18n.T("Downloaded") + "][-]"
 	}
 	return marker
+}
+
+func (a *App) setNotice(message string) {
+	if a.notice == nil {
+		return
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "Ready"
+	}
+	message = i18n.T(message)
+	a.notice.SetText("[gray]" + i18n.T("Status") + "[-]  " + message)
 }
 
 func (a *App) syncNow() {
@@ -176,21 +236,15 @@ func (a *App) syncNow() {
 		a.report(fmt.Errorf("online catalog is not configured"))
 		return
 	}
-	if a.status != nil {
-		a.status.SetMessage("Syncing library...")
-	}
+	a.setNotice("Syncing library...")
 	go func() {
 		err := a.syncCatalog(a.ctx)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
-				if a.status != nil {
-					a.status.SetMessage("[red]" + err.Error() + "[-]")
-				}
+				a.setNotice("[red]" + err.Error() + "[-]")
 				return
 			}
-			if a.status != nil {
-				a.status.SetMessage("Library synced")
-			}
+			a.setNotice("Library synced")
 		})
 	}()
 }
@@ -200,21 +254,15 @@ func (a *App) retryOnlineNow() {
 		a.report(fmt.Errorf("online catalog is not configured"))
 		return
 	}
-	if a.status != nil {
-		a.status.SetMessage("Retrying online...")
-	}
+	a.setNotice("Retrying online...")
 	go func() {
 		err := a.retryOnline(a.ctx)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
-				if a.status != nil {
-					a.status.SetMessage("[red]" + err.Error() + "[-]")
-				}
+				a.setNotice("[red]" + err.Error() + "[-]")
 				return
 			}
-			if a.status != nil {
-				a.status.SetMessage("Online")
-			}
+			a.setNotice("Online")
 			a.showArtists(false)
 		})
 	}()
@@ -230,9 +278,7 @@ func (a *App) goOffline() {
 		return
 	}
 	a.router.SetOffline()
-	if a.status != nil {
-		a.status.SetMessage("Offline")
-	}
+	a.setNotice("Offline")
 }
 
 func (a *App) downloadSong(songID string) {
@@ -249,11 +295,7 @@ func (a *App) downloadSong(songID string) {
 			a.report(err)
 			return
 		}
-		a.app.QueueUpdateDraw(func() {
-			if a.status != nil {
-				a.status.SetMessage("Download queued")
-			}
-		})
+		a.app.QueueUpdateDraw(func() { a.setNotice("Download queued") })
 	}()
 }
 
@@ -277,14 +319,10 @@ func (a *App) removeSong(songID string) {
 		}
 		a.app.QueueUpdateDraw(func() {
 			if firstErr != nil {
-				if a.status != nil {
-					a.status.SetMessage("[red]" + firstErr.Error() + "[-]")
-				}
+				a.setNotice("[red]" + firstErr.Error() + "[-]")
 				return
 			}
-			if a.status != nil {
-				a.status.SetMessage("Download removed")
-			}
+			a.setNotice("Download removed")
 		})
 	}()
 }
@@ -307,26 +345,27 @@ func (a *App) showLogin() {
 	if account.UsePlaintext {
 		authMode = 1
 	}
+	endpointLabel := i18n.T("Endpoints")
 	form := tview.NewForm().
-		AddInputField("Endpoints", endpointsText, 72, nil, func(value string) {
+		AddInputField(endpointLabel, endpointsText, 72, nil, func(value string) {
 			account.Endpoints = parseEndpoints(value)
 			account.LibraryFingerprint = ""
 		}).
-		AddInputField("Username", account.Username, 48, nil, func(value string) { account.Username = strings.TrimSpace(value) }).
-		AddPasswordField("Password", account.Password, 48, '*', func(value string) { account.Password = value }).
-		AddDropDown("Password mode", []string{"Token/salt", "Plaintext"}, authMode, func(_ string, index int) {
+		AddInputField(i18n.T("Username"), account.Username, 48, nil, func(value string) { account.Username = strings.TrimSpace(value) }).
+		AddPasswordField(i18n.T("Password"), account.Password, 48, '*', func(value string) { account.Password = value }).
+		AddDropDown(i18n.T("Password mode"), []string{i18n.T("Token/salt"), i18n.T("Plaintext")}, authMode, func(_ string, index int) {
 			account.UsePlaintext = index == 1
 		}).
-		AddButton("Login", func() {
+		AddButton(i18n.T("Login"), func() {
 			cfg.Account = account
 			a.login(cfg)
 		}).
-		AddButton("Quit", func() { a.stop() })
+		AddButton(i18n.T("Quit"), func() { a.stop() })
 
 	form.SetBorder(true)
 	setViewTitle(form)
 	styleForm(form)
-	if field, ok := form.GetFormItemByLabel("Endpoints").(*tview.InputField); ok {
+	if field, ok := form.GetFormItemByLabel(endpointLabel).(*tview.InputField); ok {
 		field.SetPlaceholder("https://server-a; https://server-b")
 	}
 
@@ -375,6 +414,9 @@ func (a *App) login(cfg models.Config) {
 		}
 		a.cfg = configured
 		_ = a.store.Save(configured)
+		if a.onlineReady != nil {
+			a.onlineReady()
+		}
 		a.app.QueueUpdateDraw(func() {
 			a.pages.RemovePage("login-loading")
 			a.showMain()
@@ -396,11 +438,14 @@ func (a *App) showMain() {
 	a.cover = newCoverPreview()
 
 	a.status = newPlayingView()
+	a.notice = newStatusLine()
+	a.setNotice("Ready")
 	a.help = newControlsHelpView()
 
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.content, 0, 1, true).
 		AddItem(a.status, playingPanelHeight, 0, false).
+		AddItem(a.notice, 1, 0, false).
 		AddItem(a.help, 4, 0, false)
 	right := a.queuePanel()
 
@@ -424,8 +469,15 @@ func newControlsHelpView() *tview.TextView {
 	help.SetWordWrap(false)
 	help.SetBorder(true)
 	setPlainTitle(help, "Controls")
-	help.SetText(tview.Escape(controlsHelpText))
+	help.SetText(tview.Escape(localizedControlsHelpText()))
 	return help
+}
+
+func localizedControlsHelpText() string {
+	if i18n.Current() != i18n.Chinese {
+		return controlsHelpText
+	}
+	return "1 艺术家 | 2 专辑 | 3 歌单 | 4 搜索 | 5 正在播放 | 6 系统 | ? 帮助 | : 命令面板 | / 筛选 | d 下载 | x 删除 | u 同步 | o 重试在线 | O 离线\n空格 播放/暂停 | ;/' 上一曲/下一曲 | a 添加 | r 循环 | s 随机 | -/= 音量 5% | [/] 音量 1% | ,/. 跳转 | q 退出"
 }
 
 func (a *App) handleGlobalKey(event *tcell.EventKey) *tcell.EventKey {
@@ -981,6 +1033,7 @@ func (a *App) showArtists(push bool) {
 }
 
 func (a *App) showArtistsAt(push bool, selected int) {
+	a.setVisibleRefresh(nil)
 	if push {
 		a.pushHistory(func() { a.showArtistsAt(false, selected) })
 	}
@@ -1014,6 +1067,7 @@ func (a *App) showArtist(id string, push bool) {
 }
 
 func (a *App) showArtistAt(id string, push bool, selected int) {
+	a.setVisibleRefresh(nil)
 	if push {
 		a.pushHistory(func() { a.showArtistAt(id, false, selected) })
 	}
@@ -1047,6 +1101,7 @@ func (a *App) showAlbums(push bool) {
 }
 
 func (a *App) showAlbumsAt(push bool, selected int) {
+	a.setVisibleRefresh(nil)
 	if push {
 		a.pushHistory(func() { a.showAlbumsAt(false, selected) })
 	}
@@ -1130,6 +1185,7 @@ func (a *App) showAlbumAt(id string, push bool, selected int) {
 			})
 			list.SetCurrentItem(selected)
 			a.setContent("Album", list)
+			a.setVisibleRefresh(func() { a.showAlbumAt(id, false, list.GetCurrentItem()) })
 		})
 	}()
 }
@@ -1139,6 +1195,7 @@ func (a *App) showPlaylists(push bool) {
 }
 
 func (a *App) showPlaylistsAt(push bool, selected int) {
+	a.setVisibleRefresh(nil)
 	if push {
 		a.pushHistory(func() { a.showPlaylistsAt(false, selected) })
 	}
@@ -1222,6 +1279,7 @@ func (a *App) showPlaylistAt(id string, push bool, selected int) {
 			})
 			list.SetCurrentItem(selected)
 			a.setContent("Playlist", list)
+			a.setVisibleRefresh(func() { a.showPlaylistAt(id, false, list.GetCurrentItem()) })
 		})
 	}()
 }
@@ -1251,6 +1309,7 @@ func (a *App) showSearch(push bool) {
 }
 
 func (a *App) runSearch(query string) {
+	a.setVisibleRefresh(nil)
 	a.setContent("Search", centeredText("Search", "Searching..."))
 	go func() {
 		result, err := a.catalog.Search(a.ctx, query, 100)
@@ -1353,6 +1412,7 @@ func (a *App) renderSearchResults(query string, result models.SearchResult, focu
 		focus = focusTargets[focusIndex].list
 	}
 	a.setContentWithFocus("Search", root, focus)
+	a.setVisibleRefresh(func() { a.runSearch(query) })
 	a.contentMouseLists = searchMouseLists(focusTargets)
 	a.contentReturn = func(back bool) bool {
 		if len(focusTargets) == 0 {
@@ -1541,6 +1601,7 @@ func (a *App) setContent(name string, item tview.Primitive) {
 }
 
 func (a *App) setContentWithFocus(name string, item tview.Primitive, focus tview.Primitive) {
+	a.visibleRefresh = nil
 	a.content.RemovePage("content")
 	a.content.AddAndSwitchToPage("content", item, true)
 	a.contentTabHandler = nil
@@ -1564,9 +1625,7 @@ func (a *App) report(err error) {
 		return
 	}
 	a.app.QueueUpdateDraw(func() {
-		if a.status != nil {
-			a.status.SetMessage("[red]" + err.Error() + "[-]")
-		}
+		a.setNotice("[red]" + err.Error() + "[-]")
 	})
 }
 
@@ -1577,6 +1636,7 @@ func (a *App) apply(cfg models.Config) models.Config {
 	} else {
 		cfg = a.client.Configure(cfg)
 	}
+	a.setLocale(cfg.Settings.Language)
 	return cfg
 }
 
@@ -1681,7 +1741,7 @@ func centeredText(title, text string) tview.Primitive {
 	view := tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignCenter).
-		SetText(text)
+		SetText(i18n.T(text))
 	view.SetBorder(true)
 	setViewTitle(view, title)
 	return view
