@@ -37,6 +37,11 @@ const (
 
 var systemTabLabels = []string{"About", "Settings"}
 
+var connectionModeLabels = []string{"Auto", "Offline"}
+var connectionModeValues = []string{models.ConnectionModeAuto, models.ConnectionModeOffline}
+var downloadVariantLabels = []string{"Stream", "Raw"}
+var downloadVariantValues = []string{models.DownloadVariantStream, models.DownloadVariantRaw}
+
 type settingsRect struct {
 	x, y, width, height int
 }
@@ -130,6 +135,79 @@ func (v *settingsView) refreshSettingsList() {
 	v.settingsRows = v.settingsRows[:0]
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Endpoints", value: endpointSummary(v.cfg.Account.Endpoints), action: func() {
 		v.openEndpointPopup()
+	}})
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Connection mode", value: connectionModeLabel(v.settings.ConnectionMode), action: func() {
+		v.openChoicePopup("Connection mode", connectionModeLabels, connectionModeOption(v.settings.ConnectionMode), func(index int) error {
+			if index < 0 || index >= len(connectionModeValues) {
+				return errors.New("invalid connection mode")
+			}
+			v.settings.ConnectionMode = connectionModeValues[index]
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
+	syncInterval := v.settings.CatalogSyncIntervalSeconds
+	if syncInterval <= 0 {
+		syncInterval = 300
+	}
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Catalog sync sec", value: strconv.Itoa(syncInterval), action: func() {
+		v.openTextPopup("Catalog sync sec", strconv.Itoa(syncInterval), func(value string) error {
+			seconds, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || seconds <= 0 {
+				return errors.New("catalog sync interval must be a positive integer")
+			}
+			v.settings.CatalogSyncIntervalSeconds = seconds
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
+	concurrency := v.settings.DownloadConcurrency
+	if concurrency <= 0 {
+		concurrency = 2
+	}
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Download concurrency", value: strconv.Itoa(concurrency), action: func() {
+		v.openTextPopup("Download concurrency", strconv.Itoa(concurrency), func(value string) error {
+			value = strings.TrimSpace(value)
+			parsed, err := strconv.Atoi(value)
+			if err != nil || parsed < 1 || parsed > 4 {
+				return errors.New("download concurrency must be 1-4")
+			}
+			v.settings.DownloadConcurrency = parsed
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
+	offlineMB := v.settings.OfflineStorageMaxBytes / 1024 / 1024
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Offline storage MB", value: offlineLimitText(offlineMB), action: func() {
+		v.openTextPopup("Offline storage MB", offlineLimitText(offlineMB), func(value string) error {
+			parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if err != nil || parsed < 0 {
+				return errors.New("offline storage MB must be zero or a positive integer")
+			}
+			v.settings.OfflineStorageMaxBytes = parsed * 1024 * 1024
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Download variant", value: downloadVariantLabel(v.settings.DefaultDownloadVariant), action: func() {
+		v.openChoicePopup("Download variant", downloadVariantLabels, downloadVariantOption(v.settings.DefaultDownloadVariant), func(index int) error {
+			if index < 0 || index >= len(downloadVariantValues) {
+				return errors.New("invalid download variant")
+			}
+			v.settings.DefaultDownloadVariant = downloadVariantValues[index]
+			v.refreshSettingsList()
+			return nil
+		})
+	}})
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Sync library", value: "Press Enter", action: func() {
+		if v.app != nil {
+			v.app.syncNow()
+		}
+	}})
+	v.settingsRows = append(v.settingsRows, settingRow{label: "Retry online", value: "Press Enter", action: func() {
+		if v.app != nil {
+			v.app.retryOnlineNow()
+		}
 	}})
 	v.settingsRows = append(v.settingsRows, settingRow{label: "Audio backend", value: fallbackText(v.settings.AudioBackend, "auto"), action: func() {
 		v.openChoicePopup("Audio backend", audioBackendLabels, audioBackendOption(v.settings.AudioBackend), func(index int) error {
@@ -985,6 +1063,10 @@ func (v *settingsView) startProbeNow(message string) {
 
 func (v *settingsView) startProbe(message string, delay time.Duration) {
 	endpoints := cloneEndpoints(v.cfg.Account.Endpoints)
+	if v.settings.ConnectionMode == models.ConnectionModeOffline {
+		v.setStatusText(v.statusText(message, endpoints, nil, false, "Offline mode; endpoint ping skipped."))
+		return
+	}
 	if v.app == nil || v.app.client == nil {
 		v.setStatusText(v.statusText(message, endpoints, nil, false, "Endpoint ping unavailable."))
 		return
@@ -1241,6 +1323,9 @@ func (v *settingsView) resolvedConfigRows() []kvRow {
 		{label: "Bundled mpv", value: onOffOptions[boolOption(v.cfg.Settings.UseBundledMPV)]},
 		{label: "Cache dir", value: resolvedAudioCacheDir(v.cfg.Settings)},
 		{label: "Audio cache limit", value: formatBytes(v.cfg.Settings.AudioCacheMaxBytes)},
+		{label: "Connection mode", value: connectionModeLabel(v.cfg.Settings.ConnectionMode)},
+		{label: "Catalog sync", value: fmt.Sprintf("%ds", v.cfg.Settings.CatalogSyncIntervalSeconds)},
+		{label: "Offline storage", value: offlineLimitText(v.cfg.Settings.OfflineStorageMaxBytes / 1024 / 1024)},
 		{label: "Health interval", value: fmt.Sprintf("%ds", v.cfg.Settings.HealthCheckIntervalSeconds)},
 	}
 }
@@ -1473,6 +1558,35 @@ func fallbackText(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func connectionModeOption(value string) int {
+	if strings.EqualFold(strings.TrimSpace(value), models.ConnectionModeOffline) {
+		return 1
+	}
+	return 0
+}
+
+func connectionModeLabel(value string) string {
+	return connectionModeLabels[connectionModeOption(value)]
+}
+
+func downloadVariantOption(value string) int {
+	if strings.EqualFold(strings.TrimSpace(value), models.DownloadVariantRaw) {
+		return 1
+	}
+	return 0
+}
+
+func downloadVariantLabel(value string) string {
+	return downloadVariantLabels[downloadVariantOption(value)]
+}
+
+func offlineLimitText(megabytes int64) string {
+	if megabytes <= 0 {
+		return "Unlimited"
+	}
+	return strconv.FormatInt(megabytes, 10)
 }
 
 func formatBytes(bytes int64) string {

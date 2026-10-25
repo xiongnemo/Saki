@@ -122,6 +122,29 @@ func normalizeSettings(settings models.Settings) models.Settings {
 	if settings.AudioCacheMaxBytes <= 0 {
 		settings.AudioCacheMaxBytes = 2 * 1024 * 1024 * 1024
 	}
+	switch strings.ToLower(strings.TrimSpace(settings.ConnectionMode)) {
+	case models.ConnectionModeOffline:
+		settings.ConnectionMode = models.ConnectionModeOffline
+	default:
+		settings.ConnectionMode = models.ConnectionModeAuto
+	}
+	if settings.CatalogSyncIntervalSeconds <= 0 {
+		settings.CatalogSyncIntervalSeconds = 300
+	}
+	if settings.DownloadConcurrency <= 0 {
+		settings.DownloadConcurrency = 2
+	}
+	if settings.DownloadConcurrency > 4 {
+		settings.DownloadConcurrency = 4
+	}
+	if settings.OfflineStorageMaxBytes < 0 {
+		settings.OfflineStorageMaxBytes = 0
+	}
+	if strings.ToLower(strings.TrimSpace(settings.DefaultDownloadVariant)) != models.DownloadVariantRaw {
+		settings.DefaultDownloadVariant = models.DownloadVariantStream
+	} else {
+		settings.DefaultDownloadVariant = models.DownloadVariantRaw
+	}
 	if settings.HealthCheckIntervalSeconds <= 0 {
 		settings.HealthCheckIntervalSeconds = 5
 	}

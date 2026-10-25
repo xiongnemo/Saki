@@ -15,6 +15,7 @@ import (
 	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/offline"
 	"github.com/xiongnemo/saki/internal/subsonic"
 )
 
@@ -23,6 +24,7 @@ type Service struct {
 	cancel context.CancelFunc
 
 	client     *subsonic.Client
+	catalog    offline.Catalog
 	audio      audio.Backend
 	media      mediaintegration.MediaIntegration
 	streamURL  func(string) string
@@ -60,6 +62,7 @@ func New(client *subsonic.Client, backend audio.Backend, media mediaintegration.
 		ctx:       ctx,
 		cancel:    cancel,
 		client:    client,
+		catalog:   client,
 		audio:     backend,
 		media:     media,
 		streamURL: client.SongURI,
@@ -72,6 +75,15 @@ func New(client *subsonic.Client, backend audio.Backend, media mediaintegration.
 	go service.consumeAudioEvents()
 	go service.consumeMediaCommands()
 	return service
+}
+
+func (s *Service) SetCatalog(catalog offline.Catalog) {
+	if catalog == nil {
+		catalog = s.client
+	}
+	s.mu.Lock()
+	s.catalog = catalog
+	s.mu.Unlock()
 }
 
 func (s *Service) SetStreamURLResolver(resolver func(string) string) {
@@ -414,7 +426,13 @@ func (s *Service) AddToCurrentPlaylist(song models.Song) {
 }
 
 func (s *Service) PlayAlbum(ctx context.Context, albumID string, track int) error {
-	album, err := s.client.GetAlbum(ctx, albumID)
+	s.mu.RLock()
+	catalog := s.catalog
+	s.mu.RUnlock()
+	if catalog == nil {
+		catalog = s.client
+	}
+	album, err := catalog.GetAlbum(ctx, albumID)
 	if err != nil {
 		return err
 	}
@@ -430,7 +448,13 @@ func (s *Service) PlayAlbum(ctx context.Context, albumID string, track int) erro
 }
 
 func (s *Service) PlayPlaylist(ctx context.Context, playlistID string, track int) error {
-	playlist, err := s.client.GetPlaylist(ctx, playlistID)
+	s.mu.RLock()
+	catalog := s.catalog
+	s.mu.RUnlock()
+	if catalog == nil {
+		catalog = s.client
+	}
+	playlist, err := catalog.GetPlaylist(ctx, playlistID)
 	if err != nil {
 		return err
 	}
@@ -438,11 +462,17 @@ func (s *Service) PlayPlaylist(ctx context.Context, playlistID string, track int
 }
 
 func (s *Service) PlayRadio(ctx context.Context, songID string) error {
-	songs, err := s.client.GetSimilarSongs(ctx, songID)
+	s.mu.RLock()
+	catalog := s.catalog
+	s.mu.RUnlock()
+	if catalog == nil {
+		catalog = s.client
+	}
+	songs, err := catalog.GetSimilarSongs(ctx, songID)
 	if err != nil {
 		return err
 	}
-	baseSong, err := s.client.GetSong(ctx, songID)
+	baseSong, err := catalog.GetSong(ctx, songID)
 	if err != nil {
 		return err
 	}
@@ -500,14 +530,6 @@ func (s *Service) loadCurrentAndPlay() error {
 	track := *s.currentTrack
 	s.mu.RUnlock()
 
-	if coverPath, err := s.cacheCoverArt(s.ctx, track); err == nil {
-		track.Image = coverPath
-	}
-
-	s.mu.Lock()
-	s.audioInfo = track.AudioInfo()
-	s.mu.Unlock()
-
 	s.mu.RLock()
 	source := s.source
 	s.mu.RUnlock()
@@ -515,6 +537,13 @@ func (s *Service) loadCurrentAndPlay() error {
 	if err != nil {
 		return err
 	}
+	if coverPath, err := s.cacheCoverArt(s.ctx, track, !isLocalAudioSource(playSource)); err == nil {
+		track.Image = coverPath
+	}
+
+	s.mu.Lock()
+	s.audioInfo = track.AudioInfo()
+	s.mu.Unlock()
 	request := audio.LoadRequest{
 		URI:             playSource,
 		TrackID:         track.ID,
@@ -554,16 +583,18 @@ func (s *Service) loadCurrentAndPlay() error {
 
 	_ = s.media.UpdateNowPlaying(track)
 	_ = s.media.SetPlaybackState(models.PlaybackPlaying)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.client.Scrobble(ctx, track.ID)
-	}()
+	if !isLocalAudioSource(playSource) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = s.client.Scrobble(ctx, track.ID)
+		}()
+	}
 	s.emit()
 	return nil
 }
 
-func (s *Service) cacheCoverArt(ctx context.Context, song models.Song) (string, error) {
+func (s *Service) cacheCoverArt(ctx context.Context, song models.Song, allowNetwork bool) (string, error) {
 	if song.CoverArt == "" {
 		return "", nil
 	}
@@ -579,6 +610,9 @@ func (s *Service) cacheCoverArt(ctx context.Context, song models.Song) (string, 
 	path := scope.CoverPath(song.CoverArt)
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
+	}
+	if !allowNetwork {
+		return "", os.ErrNotExist
 	}
 	data, endpoint, err := s.client.GetCoverArtWithEndpoint(ctx, song.CoverArt)
 	if err != nil {

@@ -1,5 +1,15 @@
 # TODO
 
+## SQLite Offline Library and Selective Downloads
+
+Status: completed.
+
+- [x] Add a pure-Go SQLite catalog for current library metadata, sync state, local queue, and download variants.
+- [x] Add online/offline catalog routing with automatic offline fallback, retry, five-minute sync, and manual sync.
+- [x] Add resumable stream/raw downloads with pinned offline files and an independent storage quota.
+- [x] Add System/Command Palette controls and offline playback integration.
+- [x] Update README, run the full verification suite, and commit the completed feature.
+
 ## Named Endpoint Editor
 
 Status: completed.

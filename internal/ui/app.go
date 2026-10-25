@@ -12,6 +12,7 @@ import (
 	"github.com/xiongnemo/saki/internal/config"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/offline"
 	"github.com/xiongnemo/saki/internal/player"
 	"github.com/xiongnemo/saki/internal/subsonic"
 )
@@ -38,7 +39,7 @@ var (
 const (
 	playingPanelHeight       = 5
 	nowPlayingPageName       = "now-playing"
-	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | 6 System | ? Help | : Commands | / Filter"
+	controlsViewHelpText     = "1 Artists | 2 Albums | 3 Playlists | 4 Search | 5 Playing | 6 System | ? Help | : Commands | / Filter | d Download | x Remove | u Sync | o Retry | O Offline"
 	controlsPlaybackHelpText = "Space Play/Pause | ;/' Prev/Next | a Add | r Repeat | s Shuffle | -/= Vol 5% | [/] Vol 1% | ,/. Seek | q Quit"
 	controlsHelpText         = controlsViewHelpText + "\n" + controlsPlaybackHelpText
 )
@@ -57,6 +58,8 @@ type App struct {
 	store       config.Store
 	cfg         models.Config
 	client      *subsonic.Client
+	catalog     offline.Catalog
+	router      *offline.Router
 	player      *player.Service
 	media       mediaintegration.MediaIntegration
 	applyConfig func(models.Config) models.Config
@@ -87,6 +90,10 @@ type App struct {
 	systemPopupCancel  func()
 	helpOverlay        *helpOverlay
 	commandPalette     *commandPalette
+	syncCatalog        func(context.Context) error
+	retryOnline        func(context.Context) error
+	downloadTrack      func(context.Context, string, string) error
+	removeDownload     func(context.Context, string, string) error
 
 	historyMu sync.Mutex
 	history   []func()
@@ -119,6 +126,7 @@ func New(ctx context.Context, cancel context.CancelFunc, store config.Store, cfg
 		store:       store,
 		cfg:         cfg,
 		client:      client,
+		catalog:     client,
 		player:      player,
 		media:       media,
 		applyConfig: applyConfig,
@@ -127,6 +135,138 @@ func New(ctx context.Context, cancel context.CancelFunc, store config.Store, cfg
 	}
 	app.app.SetMouseCapture(app.handleMouseCapture)
 	return app
+}
+
+func (a *App) SetOfflineRouter(router *offline.Router) {
+	a.router = router
+	if router != nil {
+		a.catalog = router
+	}
+}
+
+func (a *App) SetOfflineActions(syncCatalog func(context.Context) error, retryOnline func(context.Context) error, downloadTrack func(context.Context, string, string) error, removeDownload func(context.Context, string, string) error) {
+	a.syncCatalog = syncCatalog
+	a.retryOnline = retryOnline
+	a.downloadTrack = downloadTrack
+	a.removeDownload = removeDownload
+}
+
+func (a *App) syncNow() {
+	if a.syncCatalog == nil {
+		a.report(fmt.Errorf("online catalog is not configured"))
+		return
+	}
+	if a.status != nil {
+		a.status.SetMessage("Syncing library...")
+	}
+	go func() {
+		err := a.syncCatalog(a.ctx)
+		a.app.QueueUpdateDraw(func() {
+			if err != nil {
+				if a.status != nil {
+					a.status.SetMessage("[red]" + err.Error() + "[-]")
+				}
+				return
+			}
+			if a.status != nil {
+				a.status.SetMessage("Library synced")
+			}
+		})
+	}()
+}
+
+func (a *App) retryOnlineNow() {
+	if a.retryOnline == nil {
+		a.report(fmt.Errorf("online catalog is not configured"))
+		return
+	}
+	if a.status != nil {
+		a.status.SetMessage("Retrying online...")
+	}
+	go func() {
+		err := a.retryOnline(a.ctx)
+		a.app.QueueUpdateDraw(func() {
+			if err != nil {
+				if a.status != nil {
+					a.status.SetMessage("[red]" + err.Error() + "[-]")
+				}
+				return
+			}
+			if a.status != nil {
+				a.status.SetMessage("Online")
+			}
+			a.showArtists(false)
+		})
+	}()
+}
+
+func (a *App) goOffline() {
+	if a.router == nil {
+		a.report(fmt.Errorf("offline catalog is not configured"))
+		return
+	}
+	if !a.router.HasOfflineData(a.ctx) {
+		a.report(fmt.Errorf("offline library is empty; sync while online first"))
+		return
+	}
+	a.router.SetOffline()
+	if a.status != nil {
+		a.status.SetMessage("Offline")
+	}
+}
+
+func (a *App) downloadSong(songID string) {
+	if a.downloadTrack == nil {
+		a.report(fmt.Errorf("downloads are not configured"))
+		return
+	}
+	variant := a.cfg.Settings.DefaultDownloadVariant
+	if variant == "" {
+		variant = models.DownloadVariantStream
+	}
+	go func() {
+		if err := a.downloadTrack(a.ctx, songID, variant); err != nil {
+			a.report(err)
+			return
+		}
+		a.app.QueueUpdateDraw(func() {
+			if a.status != nil {
+				a.status.SetMessage("Download queued")
+			}
+		})
+	}()
+}
+
+func (a *App) downloadSongs(songs []models.Song) {
+	for _, song := range songs {
+		a.downloadSong(song.ID)
+	}
+}
+
+func (a *App) removeSong(songID string) {
+	if a.removeDownload == nil {
+		a.report(fmt.Errorf("downloads are not configured"))
+		return
+	}
+	go func() {
+		var firstErr error
+		for _, variant := range []string{models.DownloadVariantStream, models.DownloadVariantRaw} {
+			if err := a.removeDownload(a.ctx, songID, variant); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		a.app.QueueUpdateDraw(func() {
+			if firstErr != nil {
+				if a.status != nil {
+					a.status.SetMessage("[red]" + firstErr.Error() + "[-]")
+				}
+				return
+			}
+			if a.status != nil {
+				a.status.SetMessage("Download removed")
+			}
+		})
+	}()
 }
 
 func (a *App) Run() error {
@@ -186,10 +326,22 @@ func (a *App) login(cfg models.Config) {
 		return
 	}
 
+	if a.router != nil && a.router.IsOffline() && a.router.HasOfflineData(a.ctx) {
+		a.cfg = cfg
+		a.pages.AddAndSwitchToPage("login-loading", centeredText("Offline", "Opening local library..."), true)
+		a.app.QueueUpdateDraw(func() { a.pages.RemovePage("login-loading"); a.showMain() })
+		return
+	}
 	a.pages.AddAndSwitchToPage("login-loading", centeredText("Login", "Connecting to server..."), true)
 	go func() {
 		configured := a.apply(cfg)
 		if _, err := a.client.GetArtists(a.ctx); err != nil {
+			if a.router != nil && a.router.HasOfflineData(a.ctx) {
+				a.router.SetOffline()
+				a.cfg = configured
+				a.app.QueueUpdateDraw(func() { a.pages.RemovePage("login-loading"); a.showMain() })
+				return
+			}
 			a.app.QueueUpdateDraw(func() {
 				a.pages.RemovePage("login-loading")
 				a.cfg = cfg
@@ -197,6 +349,9 @@ func (a *App) login(cfg models.Config) {
 				a.modal("Login failed", err.Error())
 			})
 			return
+		}
+		if a.router != nil {
+			a.router.SetOnline()
 		}
 		a.cfg = configured
 		_ = a.store.Save(configured)
@@ -383,6 +538,20 @@ func (a *App) handleGlobalRuneShortcut(r rune) bool {
 		a.showNowPlaying(true)
 	case '6':
 		a.showSettings(true)
+	case 'u':
+		a.syncNow()
+	case 'o':
+		a.retryOnlineNow()
+	case 'O':
+		a.goOffline()
+	case 'd':
+		if a.currentState.CurrentTrack != nil {
+			a.downloadSong(a.currentState.CurrentTrack.ID)
+		}
+	case 'x':
+		if a.currentState.CurrentTrack != nil {
+			a.removeSong(a.currentState.CurrentTrack.ID)
+		}
 	case ';':
 		a.runPlaybackCommand(func() { a.player.Previous() })
 	case '\'':
@@ -779,7 +948,7 @@ func (a *App) showArtistsAt(push bool, selected int) {
 	}
 	a.setContent("Artists", centeredText("Artists", "Loading artists..."))
 	go func() {
-		artists, err := a.client.GetArtists(a.ctx)
+		artists, err := a.catalog.GetArtists(a.ctx)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Artists", err)
@@ -812,7 +981,7 @@ func (a *App) showArtistAt(id string, push bool, selected int) {
 	}
 	a.setContent("Artist", centeredText("Artist", "Loading artist..."))
 	go func() {
-		artist, err := a.client.GetArtist(a.ctx, id)
+		artist, err := a.catalog.GetArtist(a.ctx, id)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Artist", err)
@@ -845,7 +1014,7 @@ func (a *App) showAlbumsAt(push bool, selected int) {
 	}
 	a.setContent("Albums", centeredText("Albums", "Loading albums..."))
 	go func() {
-		albums, err := a.client.GetAllAlbums(a.ctx)
+		albums, err := a.catalog.GetAllAlbums(a.ctx)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Albums", err)
@@ -878,7 +1047,7 @@ func (a *App) showAlbumAt(id string, push bool, selected int) {
 	}
 	a.setContent("Album", centeredText("Album", "Loading album..."))
 	go func() {
-		album, err := a.client.GetAlbum(a.ctx, id)
+		album, err := a.catalog.GetAlbum(a.ctx, id)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Album", err)
@@ -901,6 +1070,24 @@ func (a *App) showAlbumAt(id string, push bool, selected int) {
 						return nil
 					}
 				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'd' {
+					index := list.GetCurrentItem()
+					if index >= 0 && index < len(album.Songs) {
+						a.downloadSong(album.Songs[index].ID)
+						return nil
+					}
+				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'x' {
+					index := list.GetCurrentItem()
+					if index >= 0 && index < len(album.Songs) {
+						a.removeSong(album.Songs[index].ID)
+						return nil
+					}
+				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'D' {
+					a.downloadSongs(album.Songs)
+					return nil
+				}
 				return event
 			})
 			list.SetCurrentItem(selected)
@@ -919,7 +1106,7 @@ func (a *App) showPlaylistsAt(push bool, selected int) {
 	}
 	a.setContent("Playlists", centeredText("Playlists", "Loading playlists..."))
 	go func() {
-		playlists, err := a.client.GetPlaylists(a.ctx)
+		playlists, err := a.catalog.GetPlaylists(a.ctx)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Playlists", err)
@@ -952,7 +1139,7 @@ func (a *App) showPlaylistAt(id string, push bool, selected int) {
 	}
 	a.setContent("Playlist", centeredText("Playlist", "Loading playlist..."))
 	go func() {
-		playlist, err := a.client.GetPlaylist(a.ctx, id)
+		playlist, err := a.catalog.GetPlaylist(a.ctx, id)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Playlist", err)
@@ -974,6 +1161,24 @@ func (a *App) showPlaylistAt(id string, push bool, selected int) {
 						a.player.AddToCurrentPlaylist(playlist.Entries[index])
 						return nil
 					}
+				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'd' {
+					index := list.GetCurrentItem()
+					if index >= 0 && index < len(playlist.Entries) {
+						a.downloadSong(playlist.Entries[index].ID)
+						return nil
+					}
+				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'x' {
+					index := list.GetCurrentItem()
+					if index >= 0 && index < len(playlist.Entries) {
+						a.removeSong(playlist.Entries[index].ID)
+						return nil
+					}
+				}
+				if event.Key() == tcell.KeyRune && event.Rune() == 'D' {
+					a.downloadSongs(playlist.Entries)
+					return nil
 				}
 				return event
 			})
@@ -1010,7 +1215,7 @@ func (a *App) showSearch(push bool) {
 func (a *App) runSearch(query string) {
 	a.setContent("Search", centeredText("Search", "Searching..."))
 	go func() {
-		result, err := a.client.Search(a.ctx, query, 100)
+		result, err := a.catalog.Search(a.ctx, query, 100)
 		a.app.QueueUpdateDraw(func() {
 			if err != nil {
 				a.showError("Search", err)
