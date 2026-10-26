@@ -112,13 +112,18 @@ if ($env:SAKI_VERSION_DIRTY) {
     $dirtyOutput = Get-GitOutput @('status', '--porcelain')
     $dirty = if ($dirtyOutput) { 'true' } else { 'false' }
 }
+$release = if ($env:SAKI_RELEASE -in @('1', 'true', 'yes')) { 'true' } else { 'false' }
+if ($release -eq 'true' -and $dirty -eq 'true') {
+    throw 'A release must be built from a clean tree.'
+}
 $versionLdFlags = @(
     '-s',
     '-w',
     "-X github.com/xiongnemo/saki/internal/version.BaseVersion=$baseVersion",
     "-X github.com/xiongnemo/saki/internal/version.BranchName=$branchName",
     "-X github.com/xiongnemo/saki/internal/version.CommitHash=$commitHash",
-    "-X github.com/xiongnemo/saki/internal/version.Dirty=$dirty"
+    "-X github.com/xiongnemo/saki/internal/version.Dirty=$dirty",
+    "-X github.com/xiongnemo/saki/internal/version.Release=$release"
 ) -join ' '
 
 $cgoEnabled = (& go env CGO_ENABLED).Trim()

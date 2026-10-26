@@ -292,6 +292,9 @@ jobs:
           set -euo pipefail
           mkdir -p "dist/${ARTIFACT_NAME}"
           go build -trimpath -ldflags "${VERSION_LDFLAGS}" -o "dist/${ARTIFACT_NAME}/saki" ./cmd/saki
+          actual_version="$("dist/${ARTIFACT_NAME}/saki" --version)"
+          echo "Built version: ${actual_version}"
+          [ "$actual_version" = "$SAKI_VERSION" ]
           tar -C dist -czf "dist/${ARTIFACT_NAME}.tar.gz" "${ARTIFACT_NAME}"
           echo "ARCHIVE_PATH=dist/${ARTIFACT_NAME}.tar.gz" >> "$GITHUB_ENV"
 
@@ -310,7 +313,7 @@ jobs:
           docker run --rm \
             -v "$(go env GOROOT):/usr/local/go:ro" \
             -v "$PWD:/src" -w /src \
-            -e GOPROXY -e VERSION_LDFLAGS -e ARTIFACT_NAME \
+            -e GOPROXY -e VERSION_LDFLAGS -e ARTIFACT_NAME -e SAKI_VERSION \
             -e HOST_IDS="$(id -u):$(id -g)" \
             "$ALPINE_BUILD_IMAGE" sh -euc '
               apk add --no-cache gcc musl-dev alsa-lib >/dev/null
@@ -319,6 +322,9 @@ jobs:
               go test ./...
               mkdir -p "dist/${ARTIFACT_NAME}"
               go build -trimpath -ldflags "${VERSION_LDFLAGS}" -o "dist/${ARTIFACT_NAME}/saki" ./cmd/saki
+              actual_version="$("dist/${ARTIFACT_NAME}/saki" --version)"
+              echo "Built version: ${actual_version}"
+              [ "$actual_version" = "$SAKI_VERSION" ]
               chown -R "$HOST_IDS" dist
             '
           file "dist/${ARTIFACT_NAME}/saki"
@@ -369,6 +375,11 @@ jobs:
           $env:CGO_CFLAGS = '${{ matrix.cgo_cflags }}'
           $env:CGO_LDFLAGS = '${{ matrix.cgo_ldflags }}'
           .\scripts\build-windows.ps1 -OutputDir "dist\$env:ARTIFACT_NAME" -SkipTests
+          $builtVersion = (& "dist\$env:ARTIFACT_NAME\saki.exe" --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $builtVersion -cne $env:SAKI_VERSION) {
+            throw "Built version '$builtVersion' does not match '$env:SAKI_VERSION'."
+          }
+          Write-Host "Built version: $builtVersion"
           Compress-Archive -Path "dist\$env:ARTIFACT_NAME\*" -DestinationPath "dist\$env:ARTIFACT_NAME.zip" -Force
           "ARCHIVE_PATH=dist\$env:ARTIFACT_NAME.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -426,10 +437,11 @@ jobs:
         shell: bash
         env:
           FORMAT: ${{ matrix.format }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           ls -l pkg
-          docker run --rm -e FORMAT -v "$PWD/pkg:/pkg:ro" "${{ matrix.image }}" sh -euc '
+          docker run --rm -e FORMAT -e EXPECTED_VERSION -v "$PWD/pkg:/pkg:ro" "${{ matrix.image }}" sh -euc '
             case "$FORMAT" in
               apk)
                 apk --version
@@ -455,7 +467,9 @@ jobs:
                 ;;
             esac
             echo "installed saki $version"
-            saki --version
+            actual_version="$(saki --version)"
+            echo "Installed version: $actual_version"
+            [ "$actual_version" = "$EXPECTED_VERSION" ]
           '
 
   publish:

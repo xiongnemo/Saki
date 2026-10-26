@@ -157,15 +157,15 @@ The Linux builds also ship as packages that pull in ALSA for audio: `.deb` and
 musl builds; the regular Linux builds link glibc and do not start there.
 
 ```sh
-sudo apt install ./saki-v0.0.63-dev-<commit>-linux-amd64.deb
-sudo dnf install ./saki-v0.0.63-dev-<commit>-linux-amd64.rpm
-apk add --allow-untrusted ./saki-v0.0.63-dev-<commit>-linux-musl-amd64.apk
+sudo apt install ./saki-v1.0.0-linux-amd64.deb
+sudo dnf install ./saki-v1.0.0-linux-amd64.rpm
+apk add --allow-untrusted ./saki-v1.0.0-linux-musl-amd64.apk
 ```
 
-That build installs as version `0.0.63~pre-1` (deb, rpm) or `0.0.63_pre-r1`
-(apk): a package version has no room for a branch and commit, so dev builds are
-marked as a prerelease of their base version, ordered before a later `v0.0.63`
-tag, and the full build version is in the package description.
+The `v1.0.0` release installs as version `1.0.0-1` (deb, rpm) or `1.0.0-r1`
+(apk). Dev builds use `~pre-1` (deb, rpm) or `_pre-r1` (apk) after their base
+version, so they sort before a release with the same base. The full dev build
+version, including its branch and commit, is in the package description.
 
 Each build embeds version metadata in this format:
 
