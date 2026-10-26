@@ -2,12 +2,19 @@
 
 ## v1.0.0 Release
 
-Status: in progress.
+Status: completed.
 
 - [x] Pass the release flag through the Windows build script and verify executable versions in CI.
 - [x] Update release installation examples and run tests, vet, and workflow validation.
-- [ ] Rerun release rehearsal with executable and installed-package version checks.
-- [ ] Publish the exact `v1.0.0` tag after rehearsal and verify release assets and stable package delivery.
+- [x] Rerun release rehearsal with executable and installed-package version checks.
+- [x] Publish the exact `v1.0.0` tag after rehearsal and verify release assets and stable package delivery.
+
+Released commit: `bdc6ddd4cf34c0527c71fe08b9c617cbca33a21d`.
+Rehearsal: [40256411776](https://github.com/xiongnemo/Saki/actions/runs/40256411776).
+Release build: [40256919301](https://github.com/xiongnemo/Saki/actions/runs/40256919301).
+[Saki v1.0.0](https://github.com/xiongnemo/Saki/releases/tag/v1.0.0) is the latest
+normal release with 18 assets. The live stable package manifest includes all
+eight Linux packages and both macOS archives.
 
 ## Offline Status, Startup Sync, and UI Localization
 
