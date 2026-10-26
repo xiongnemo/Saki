@@ -1,5 +1,14 @@
 # TODO
 
+## v1.0.0 Release
+
+Status: in progress.
+
+- [x] Pass the release flag through the Windows build script and verify executable versions in CI.
+- [x] Update release installation examples and run tests, vet, and workflow validation.
+- [ ] Rerun release rehearsal with executable and installed-package version checks.
+- [ ] Publish the exact `v1.0.0` tag after rehearsal and verify release assets and stable package delivery.
+
 ## Offline Status, Startup Sync, and UI Localization
 
 Status: completed.
