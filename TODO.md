@@ -100,7 +100,7 @@ Status: completed.
 
 - [x] Embed the Windows SMTC shim DLL into the Windows Go executable with a Windows-only `go:embed` source.
 - [x] Keep the C++/WinRT shim behind Windows-only build tags so Linux/macOS builds do not require MSVC or Windows SDK.
-- [x] At runtime on Windows, extract the embedded DLL to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll`, then load it from that stable cache path.
+- [x] At runtime on Windows, extract the embedded DLL to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll`, then load it from that stable cache path. (Now `%USERPROFILE%\.cache\saki\smtc`; see XDG File Layout below.)
 - [x] Keep non-Windows media integration as no-op until Linux MPRIS or macOS Now Playing support is implemented.
 - [x] Add GitHub Actions release builds using native OS runners: `ubuntu-latest`, `macos-latest`, and `windows-latest`.
 - [x] Publish the built archives to a GitHub Release.
@@ -410,11 +410,12 @@ Status: completed.
 
 ## XDG File Layout and `saki migrate`
 
-Status: in progress (branch `xdg-dirs`).
+Status: completed on branch `xdg-dirs`; waiting for review before it reaches `dev`.
 
-- [ ] Resolve every per-user path in one place (`internal/paths`): `~/.config/saki`, `~/.local/share/saki`, `~/.local/state/saki`, `~/.cache/saki` on every OS, honoring absolute `XDG_*_HOME` only.
-- [ ] Config `~/.saki/config.json` -> `~/.config/saki/config.json`; offline catalog and downloads -> data; audio and cover caches and the extracted SMTC shim -> cache; instance lock -> state; mpv socket -> `$XDG_RUNTIME_DIR/saki` when set.
-- [ ] Keep `settings.cacheDir` as the override for the cache, catalog and downloads.
-- [ ] Fall back per item to the old locations (`~/.saki`, `os.UserCacheDir()/saki`, `%LOCALAPPDATA%\Saki\smtc`) and say so on stderr before the TUI starts and in the status line.
-- [ ] Add `saki migrate [--dry-run]`: merge without overwriting, keep both copies on conflict, rewrite download paths in the catalog databases and a `cacheDir` that names the old default, delete the old SMTC shim, refuse while another Saki holds the lock.
-- [ ] Tests for resolution and migrate; README "Files" section; update the SMTC docs.
+- [x] Resolve every per-user path in one place (`internal/paths`): `~/.config/saki`, `~/.local/share/saki`, `~/.local/state/saki`, `~/.cache/saki` on every OS, honoring absolute `XDG_*_HOME` only.
+- [x] Config `~/.saki/config.json` -> `~/.config/saki/config.json`; offline catalog and downloads -> data; audio and cover caches and the extracted SMTC shim -> cache; instance lock -> state; mpv socket -> `$XDG_RUNTIME_DIR/saki` when set.
+- [x] Keep `settings.cacheDir` as the override for the cache, catalog and downloads.
+- [x] Fall back per item to the old locations (`~/.saki`, `os.UserCacheDir()/saki`, `%LOCALAPPDATA%\Saki\smtc`) and say so on stderr before the TUI starts and in the status line.
+- [x] Add `saki migrate [--dry-run]`: merge without overwriting, keep both copies on conflict, rewrite download paths in the catalog databases and a `cacheDir` that names the old default, delete the old SMTC shim, refuse while another Saki holds the lock.
+- [x] Tests for resolution and migrate; README "Files" section; update the SMTC docs.
+- [ ] Update the Scoop manifests' `notes` once a build with this layout is published.

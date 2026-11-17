@@ -9,6 +9,8 @@ cl /std:c++17 /EHsc /DUNICODE /D_UNICODE /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRE
 ```
 
 Windows Go builds embed the resulting `saki_smtc.dll` into `saki.exe`. At
-runtime, Saki extracts it to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll` and loads
-that cached copy. Keeping a DLL next to `saki.exe` or on `PATH` is only a
+runtime, Saki extracts it to `%USERPROFILE%\.cache\saki\smtc\saki_smtc.dll`
+(below `%XDG_CACHE_HOME%` when that is an absolute path) and loads that cached
+copy. Releases up to v1.0.0 extracted it to `%LOCALAPPDATA%\Saki\smtc`, which
+`saki migrate` deletes. Keeping a DLL next to `saki.exe` or on `PATH` is only a
 fallback for development or failed extraction.

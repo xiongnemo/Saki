@@ -119,6 +119,70 @@ For local playback, install `mpv` so `mpv.exe` is on `PATH`, or set the full
 backend. System is available from the main screen with `6` or the Command
 Palette.
 
+After upgrading from a release that kept its files in `~/.saki` and the OS
+cache directory, move them to the current layout (see [Files](#files)):
+
+```text
+saki migrate --dry-run
+saki migrate
+```
+
+## Files
+
+Saki keeps its per-user files in the XDG Base Directory layout under the home
+directory on every OS, Windows and macOS included. `~` is `$HOME`, or
+`%USERPROFILE%` on Windows.
+
+| What | Where | Kind |
+|---|---|---|
+| `config.json`: endpoints, account, settings | `~/.config/saki/` | config |
+| Offline catalog (`catalog/<library>/library.db`) and downloaded tracks (`offline/<library>/`) | `~/.local/share/saki/` | data |
+| Instance lock (`saki.lock`) | `~/.local/state/saki/` | state |
+| Audio cache (`audio/`), cover art (`covers/`), Windows SMTC shim (`smtc/saki_smtc.dll`) | `~/.cache/saki/` | cache |
+| mpv IPC socket (Unix, mpv backend only) | `$XDG_RUNTIME_DIR/saki/`, otherwise the temporary directory | runtime |
+
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and
+`XDG_RUNTIME_DIR` replace the defaults above when they hold an absolute path;
+relative values are ignored, as the XDG specification says. On Windows mpv
+talks over a named pipe, so there is no socket file. The **Cache dir** setting
+(`settings.cacheDir` in `config.json`) still overrides the location of the
+audio cache, cover art, offline catalog and downloads: when it is set, all four
+live below it, as they always have.
+
+`config.json` holds your password and the token derived from it, so Saki
+creates `~/.config/saki` with mode 0700 and the file with mode 0600.
+
+### Older Locations and `saki migrate`
+
+Releases up to v1.0.0 kept `config.json` in `~/.saki` and everything else in
+the OS cache directory: `%LOCALAPPDATA%\saki` on Windows (the SMTC shim in
+`%LOCALAPPDATA%\Saki\smtc`), `~/Library/Caches/saki` on macOS and
+`~/.cache/saki` on Linux, where the offline catalog and downloads now move to
+`~/.local/share/saki`.
+
+Saki keeps working with those files. It resolves each item on its own: the new
+location if the item is there, otherwise the old location if the item is
+there, otherwise the new location, created on first write. For every item it
+reads from an old location, it prints one line to stderr before the TUI starts
+(you see it again after quitting), and the status line says so.
+
+`saki migrate` moves everything over, and `saki migrate --dry-run` prints the
+plan without changing anything. Migrate renames where it can, and otherwise
+copies, checks size and SHA-256, and only then deletes the original. It never
+overwrites: directories merge file by file, a file with the same content in
+both places is removed from the old one, and a file with different content
+stays in both, is reported, and makes migrate exit 1 after it has done
+everything else. It also rewrites the download paths stored in the offline
+catalog, resets a Cache dir setting that names the old default location,
+deletes the old SMTC shim (Saki extracts it again) and removes old directories
+that end up empty. Saki registers nothing with the OS, so there is nothing to
+re-register. Once everything has moved, migrate says there is nothing to
+migrate.
+
+Quit Saki before migrating. Migrate refuses to run while another Saki holds the
+instance lock, but releases from before this layout take no lock and cannot be
+detected.
+
 ## Build On Windows
 
 ```pwsh
@@ -188,8 +252,10 @@ and the next commit builds as `v0.1.1-...`. Dev prerelease tags like
 ## Windows SMTC Shim
 
 Windows builds embed `saki_smtc.dll` into the Go executable. At runtime, Saki
-extracts the embedded shim to `%LOCALAPPDATA%\Saki\smtc\saki_smtc.dll` and
-loads it from that stable cache path.
+extracts the embedded shim to `%USERPROFILE%\.cache\saki\smtc\saki_smtc.dll`
+(`%XDG_CACHE_HOME%\saki\smtc` when that is set) and loads it from that stable
+cache path. Releases up to v1.0.0 used `%LOCALAPPDATA%\Saki\smtc`;
+`saki migrate` deletes that copy.
 
 During development, `go run ./cmd/saki` can start without a compiled shim, but
 Windows SMTC stays disabled unless `saki_smtc.dll` is available beside the
