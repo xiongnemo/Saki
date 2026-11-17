@@ -154,8 +154,8 @@ creates `~/.config/saki` with mode 0700 and the file with mode 0600.
 
 ### Older Locations and `saki migrate`
 
-Releases up to v1.0.0 kept `config.json` in `~/.saki` and everything else in
-the OS cache directory: `%LOCALAPPDATA%\saki` on Windows (the SMTC shim in
+Earlier builds (v1.0.0 and the dev builds up to v1.0.1-dev) kept
+`config.json` in `~/.saki` and everything else in the OS cache directory: `%LOCALAPPDATA%\saki` on Windows (the SMTC shim in
 `%LOCALAPPDATA%\Saki\smtc`), `~/Library/Caches/saki` on macOS and
 `~/.cache/saki` on Linux, where the offline catalog and downloads now move to
 `~/.local/share/saki`.
@@ -254,8 +254,8 @@ and the next commit builds as `v0.1.1-...`. Dev prerelease tags like
 Windows builds embed `saki_smtc.dll` into the Go executable. At runtime, Saki
 extracts the embedded shim to `%USERPROFILE%\.cache\saki\smtc\saki_smtc.dll`
 (`%XDG_CACHE_HOME%\saki\smtc` when that is set) and loads it from that stable
-cache path. Releases up to v1.0.0 used `%LOCALAPPDATA%\Saki\smtc`;
-`saki migrate` deletes that copy.
+cache path. Earlier builds used `%LOCALAPPDATA%\Saki\smtc`; `saki migrate`
+deletes that copy.
 
 During development, `go run ./cmd/saki` can start without a compiled shim, but
 Windows SMTC stays disabled unless `saki_smtc.dll` is available beside the
