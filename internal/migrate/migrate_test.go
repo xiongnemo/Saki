@@ -453,6 +453,110 @@ func TestDatabaseAndSidecarsMoveTogether(t *testing.T) {
 	}
 }
 
+// crossVolume fails every rename, as between volumes, so that files are copied.
+func crossVolume(oldpath, newpath string) error {
+	return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: errors.New("invalid cross-device link")}
+}
+
+// failCopy makes copies whose source or destination matches fail.
+func failCopy(match func(src, dst string) bool) func(string, string, fs.FileInfo) error {
+	return func(src, dst string, info fs.FileInfo) error {
+		if match(src, dst) {
+			return errors.New("injected copy failure")
+		}
+		return copyVerified(src, dst, info)
+	}
+}
+
+func TestDatabaseGroupMovesBackWhenAMemberFails(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.old("catalog", "ns", "library.db"), "db")
+	write(t, f.old("catalog", "ns", "library.db-wal"), "wal")
+	write(t, f.old("covers", "ns", "c.jpg"), "cover")
+
+	var out bytes.Buffer
+	err := Run(context.Background(), Options{Env: f.env, Out: &out, Rename: crossVolume,
+		copyFile: failCopy(func(src, _ string) bool { return strings.HasSuffix(src, "-wal") })})
+	var failure *FailureError
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a failure\n%s", err, out.String())
+	}
+	if read(t, f.old("catalog", "ns", "library.db")) != "db" || read(t, f.old("catalog", "ns", "library.db-wal")) != "wal" {
+		t.Fatalf("the group is not back at the old location\n%s", out.String())
+	}
+	for _, name := range []string{"library.db", "library.db-wal"} {
+		if exists(f.newData("catalog", "ns", name)) {
+			t.Fatalf("%s was left at the new location without the rest of its group\n%s", name, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "undo      "+f.newData("catalog", "ns", "library.db")) {
+		t.Fatalf("moving back not reported:\n%s", out.String())
+	}
+	if read(t, f.newCache("covers", "ns", "c.jpg")) != "cover" {
+		t.Fatalf("migrate stopped at the failed group\n%s", out.String())
+	}
+}
+
+func TestDatabaseGroupThatCannotMoveBackSaysWhereEveryFileIs(t *testing.T) {
+	f := newFixture(t)
+	write(t, f.old("catalog", "ns", "library.db"), "db")
+	write(t, f.old("catalog", "ns", "library.db-wal"), "wal")
+
+	var out bytes.Buffer
+	err := Run(context.Background(), Options{Env: f.env, Out: &out, Rename: crossVolume,
+		copyFile: failCopy(func(src, dst string) bool {
+			return strings.HasSuffix(src, "-wal") || strings.HasPrefix(dst, f.legacyRoot)
+		})})
+	var failure *FailureError
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a failure\n%s", err, out.String())
+	}
+	stranded := f.newData("catalog", "ns", "library.db")
+	if read(t, stranded) != "db" || read(t, f.old("catalog", "ns", "library.db-wal")) != "wal" {
+		t.Fatalf("a file was lost\n%s", out.String())
+	}
+	for _, want := range []string{stranded, f.old("catalog", "ns", "library.db-wal"), "by hand before starting Saki"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("message lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestOrphanJournalsStayInPlace(t *testing.T) {
+	f := newFixture(t)
+	orphans := []string{"library.db-journal", "library.db-shm", "library.db-wal"}
+	for _, name := range orphans {
+		write(t, f.old("catalog", "orphan", name), name)
+	}
+	write(t, f.old("catalog", "ns", "library.db"), "db")
+
+	for _, dryRun := range []bool{true, false} {
+		out, err := f.run(t, dryRun)
+		if err != nil {
+			t.Fatalf("dry=%v: %v\n%s", dryRun, err, out)
+		}
+		for _, name := range orphans {
+			if !strings.Contains(out, "skip      "+f.old("catalog", "orphan", name)) {
+				t.Fatalf("dry=%v: orphan %s not reported:\n%s", dryRun, name, out)
+			}
+		}
+		if strings.Contains(out, "conflict") || strings.Contains(out, "move      "+f.old("catalog", "orphan")) {
+			t.Fatalf("dry=%v: orphans planned for moving or called a conflict:\n%s", dryRun, out)
+		}
+	}
+	for _, name := range orphans {
+		if read(t, f.old("catalog", "orphan", name)) != name || exists(f.newData("catalog", "orphan", name)) {
+			t.Fatalf("orphan %s moved", name)
+		}
+	}
+	if read(t, f.newData("catalog", "ns", "library.db")) != "db" {
+		t.Fatal("the database next to the orphans did not move")
+	}
+	if out, err := f.run(t, false); err != nil || !strings.Contains(out, "Nothing to migrate.") {
+		t.Fatalf("second run: %v\n%s", err, out)
+	}
+}
+
 func TestSkipsUnknownFilesAndKeepsTheirDirectory(t *testing.T) {
 	f := newFixture(t)
 	write(t, f.legacyConfig(), "{}")

@@ -31,6 +31,9 @@ type Options struct {
 	// Rename defaults to os.Rename. Tests replace it to exercise the copy
 	// that runs when a rename fails across volumes.
 	Rename func(oldpath, newpath string) error
+
+	// copyFile defaults to copyVerified; tests make it fail.
+	copyFile func(src, dst string, info fs.FileInfo) error
 }
 
 // ErrRunning means another Saki holds the instance lock.
@@ -61,6 +64,7 @@ type migrator struct {
 	dryRun    bool
 	out       io.Writer
 	rename    func(string, string) error
+	copy      func(string, string, fs.FileInfo) error
 	actions   int
 	conflicts int
 	failures  int
@@ -90,12 +94,15 @@ func (m *migrator) fail(path string, err error) {
 // Run migrates, or with DryRun prints what it would do. It returns a
 // *ConflictError or *FailureError when something was left behind.
 func Run(ctx context.Context, opts Options) error {
-	m := &migrator{env: opts.Env, goos: opts.Env.OS(), dryRun: opts.DryRun, out: opts.Out, rename: opts.Rename}
+	m := &migrator{env: opts.Env, goos: opts.Env.OS(), dryRun: opts.DryRun, out: opts.Out, rename: opts.Rename, copy: opts.copyFile}
 	if m.out == nil {
 		m.out = io.Discard
 	}
 	if m.rename == nil {
 		m.rename = os.Rename
+	}
+	if m.copy == nil {
+		m.copy = copyVerified
 	}
 	env := opts.Env
 
