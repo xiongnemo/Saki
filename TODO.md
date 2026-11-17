@@ -407,3 +407,14 @@ Status: completed.
 - [x] Render the tag build bare: `version.Release` makes `--version` report `v0.1.0`, and packages are `0.1.0-1` / `0.1.0-r1`; refuse a tag that is not the version its commit computes, or a dirty tree.
 - [x] Take the published tag and version from the build job instead of deriving them a second time in the publish job.
 - [x] Add a `rehearse_release` manual run that builds, packages and smoke-tests a release without publishing.
+
+## XDG File Layout and `saki migrate`
+
+Status: in progress (branch `xdg-dirs`).
+
+- [ ] Resolve every per-user path in one place (`internal/paths`): `~/.config/saki`, `~/.local/share/saki`, `~/.local/state/saki`, `~/.cache/saki` on every OS, honoring absolute `XDG_*_HOME` only.
+- [ ] Config `~/.saki/config.json` -> `~/.config/saki/config.json`; offline catalog and downloads -> data; audio and cover caches and the extracted SMTC shim -> cache; instance lock -> state; mpv socket -> `$XDG_RUNTIME_DIR/saki` when set.
+- [ ] Keep `settings.cacheDir` as the override for the cache, catalog and downloads.
+- [ ] Fall back per item to the old locations (`~/.saki`, `os.UserCacheDir()/saki`, `%LOCALAPPDATA%\Saki\smtc`) and say so on stderr before the TUI starts and in the status line.
+- [ ] Add `saki migrate [--dry-run]`: merge without overwriting, keep both copies on conflict, rewrite download paths in the catalog databases and a `cacheDir` that names the old default, delete the old SMTC shim, refuse while another Saki holds the lock.
+- [ ] Tests for resolution and migrate; README "Files" section; update the SMTC docs.
