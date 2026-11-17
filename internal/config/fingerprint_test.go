@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/testenv"
 )
 
 func TestSaveLoadPreservesAccountLibraryFingerprint(t *testing.T) {
 	// Given
-	home := t.TempDir()
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("HOME", home)
+	home := testenv.Home(t)
 	store := NewStore("Saki", "config.json")
 	cfg := models.Config{Account: models.Account{
 		Username:           "nemo",
@@ -38,7 +37,10 @@ func TestSaveLoadPreservesAccountLibraryFingerprint(t *testing.T) {
 	if loaded.Account.LibraryFingerprint != "verified-library" {
 		t.Fatalf("library fingerprint = %q", loaded.Account.LibraryFingerprint)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".saki", "config.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".config", "saki", "config.json")); err != nil {
 		t.Fatalf("config file was not saved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".saki")); !os.IsNotExist(err) {
+		t.Fatalf("a fresh install touched the old config directory: %v", err)
 	}
 }

@@ -77,6 +77,8 @@ var chinese = map[string]string{
 	"Connection mode": "连接模式", "Auto": "自动", "Language": "语言",
 	"English": "English", "中文": "中文", "Endpoints": "端点",
 	"Audio backend": "音频后端", "MPV path": "MPV 路径", "Cache dir": "缓存目录",
+	"Downloads dir": "下载目录",
+	"Using files from older Saki locations; quit and run saki migrate": "正在使用旧版 Saki 位置中的文件；请退出并运行 saki migrate",
 	"Audio cache MB": "音频缓存 MB", "Health interval sec": "健康检查间隔（秒）",
 	"Switch threshold": "切换阈值", "Prefetch": "预取", "Bundled mpv": "内置 mpv",
 	"Catalog sync sec": "资料库同步间隔（秒）", "Download concurrency": "下载并发数",

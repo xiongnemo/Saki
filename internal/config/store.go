@@ -9,23 +9,40 @@ import (
 	"strings"
 
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/paths"
 )
 
 type Store struct {
 	appName  string
 	fileName string
+	path     string
 }
 
+// NewStore returns a store that resolves its file on every access: the XDG
+// config directory when the file exists there, ~/.saki when only an old
+// release wrote it, the XDG config directory otherwise.
 func NewStore(appName, fileName string) Store {
 	return Store{appName: appName, fileName: fileName}
 }
 
+// NewStoreAt returns a store for a path resolved once by the caller.
+func NewStoreAt(path string) Store {
+	return Store{fileName: filepath.Base(path), path: path}
+}
+
 func (s Store) Path() (string, error) {
-	home, err := os.UserHomeDir()
+	if s.path != "" {
+		return s.path, nil
+	}
+	env, err := paths.System()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".saki", s.fileName), nil
+	fileName := s.fileName
+	if fileName == "" {
+		fileName = paths.ConfigFile
+	}
+	return paths.ResolveConfigFile(env, fileName).Path, nil
 }
 
 func (s Store) Load() (models.Config, error) {

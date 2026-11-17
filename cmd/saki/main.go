@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,10 +12,13 @@ import (
 	"time"
 
 	"github.com/xiongnemo/saki/internal/audio"
+	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/config"
+	"github.com/xiongnemo/saki/internal/instancelock"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/offline"
+	"github.com/xiongnemo/saki/internal/paths"
 	"github.com/xiongnemo/saki/internal/player"
 	"github.com/xiongnemo/saki/internal/selfinstall"
 	"github.com/xiongnemo/saki/internal/streamproxy"
@@ -39,6 +43,42 @@ func runCLIProcess(args []string) int {
 	return runCLI(args, runtime)
 }
 
+// resolveFiles takes the instance lock, finds config and storage, and returns
+// one line for each item still at an old location.
+func resolveFiles(env paths.Env) (*instancelock.Lock, config.Store, models.Config, []string, error) {
+	lock, err := instancelock.Shared(env.LockPath())
+	if errors.Is(err, instancelock.ErrLocked) {
+		return nil, config.Store{}, models.Config{}, nil, errors.New("saki migrate is running; start Saki again when it has finished")
+	}
+	if err != nil {
+		// Saki still works; only saki migrate cannot see this instance.
+		fmt.Fprintf(os.Stderr, "saki: cannot take the instance lock %s: %v\n", env.LockPath(), err)
+	}
+
+	var notices []string
+	configItem := paths.ResolveConfig(env)
+	if notice := configItem.Notice(); notice != "" {
+		notices = append(notices, notice)
+	}
+	store := config.NewStoreAt(configItem.Path)
+	cfg, err := store.Load()
+	if err != nil {
+		_ = lock.Close()
+		return nil, config.Store{}, models.Config{}, nil, fmt.Errorf("load config %s: %w", configItem.Path, err)
+	}
+
+	// The defaults matter even with settings.cacheDir set: clearing it in
+	// Settings switches back to them.
+	defaults := paths.ResolveStorage(env, "")
+	cachepaths.SetDefaultRoots(cachepaths.RootsOf(defaults))
+	if strings.TrimSpace(cfg.Settings.CacheDir) == "" {
+		notices = append(notices, defaults.Notices()...)
+	} else {
+		notices = append(notices, paths.ResolveStorage(env, cfg.Settings.CacheDir).Notices()...)
+	}
+	return lock, store, cfg, notices, nil
+}
+
 func runInstall(options installOptions) error {
 	installer, err := selfinstall.New(selfinstall.Options{
 		Directory: options.directory,
@@ -55,10 +95,18 @@ func runTUI() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cfgStore := config.NewStore("Saki", "config.json")
-	cfg, err := cfgStore.Load()
+	env, err := paths.System()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
+	}
+	lock, cfgStore, cfg, notices, err := resolveFiles(env)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	// Before the TUI takes the screen; the lines reappear when it exits.
+	for _, notice := range notices {
+		fmt.Fprintln(os.Stderr, notice)
 	}
 
 	client := subsonic.NewClient(nil)
@@ -171,6 +219,9 @@ func runTUI() error {
 	}
 
 	app := ui.New(ctx, cancel, cfgStore, cfg, client, musicPlayer, media, applyConfig)
+	if len(notices) > 0 {
+		app.SetStartupNotice("Using files from older Saki locations; quit and run saki migrate")
+	}
 	app.SetOfflineRouter(router)
 	app.SetLocalStatus(func(statusCtx context.Context, id string) (bool, bool) {
 		_, cached := proxy.CachedPath(id)

@@ -601,9 +601,6 @@ func (s *Service) cacheCoverArt(ctx context.Context, song models.Song, allowNetw
 	s.mu.RLock()
 	cacheRoot := s.cacheRoot
 	s.mu.RUnlock()
-	if cacheRoot == "" {
-		cacheRoot = cachepaths.ResolveRoot("")
-	}
 	account := s.client.ActiveAccount()
 	endpoint := s.client.ActiveEndpoint()
 	scope := cachepaths.NewScope(cacheRoot, account.Username, endpoint.URL, account.LibraryFingerprint)

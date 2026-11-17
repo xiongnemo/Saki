@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/paths"
 )
 
 type MPVBackend struct {
@@ -367,7 +368,15 @@ func floatValue(value any) (float64, bool) {
 	}
 }
 
+// mpvIPCDir is where mpv's IPC socket goes on Unix: $XDG_RUNTIME_DIR/saki when
+// XDG_RUNTIME_DIR is set to an absolute path, the temporary directory
+// otherwise. Windows uses a named pipe instead.
 func mpvIPCDir() string {
+	if dir, ok := (paths.Env{Getenv: os.Getenv}).RuntimeDir(); ok {
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			return dir
+		}
+	}
 	dir := os.TempDir()
 	if dir == "" {
 		dir = "."

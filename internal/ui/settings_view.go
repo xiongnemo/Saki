@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/rivo/uniseg"
+	"github.com/xiongnemo/saki/internal/cachepaths"
 	"github.com/xiongnemo/saki/internal/i18n"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/subsonic"
@@ -1355,6 +1355,7 @@ func (v *settingsView) resolvedConfigRows() []kvRow {
 		{label: "MPV path", value: fallbackText(v.cfg.Settings.MPVPath, "PATH lookup")},
 		{label: "Bundled mpv", value: onOffOptions[boolOption(v.cfg.Settings.UseBundledMPV)]},
 		{label: "Cache dir", value: resolvedAudioCacheDir(v.cfg.Settings)},
+		{label: "Downloads dir", value: resolvedOfflineDir(v.cfg.Settings)},
 		{label: "Audio cache limit", value: formatBytes(v.cfg.Settings.AudioCacheMaxBytes)},
 		{label: "Connection mode", value: connectionModeLabel(v.cfg.Settings.ConnectionMode)},
 		{label: "Catalog sync", value: fmt.Sprintf("%ds", v.cfg.Settings.CatalogSyncIntervalSeconds)},
@@ -1575,15 +1576,11 @@ func osArchLabel() string {
 }
 
 func resolvedAudioCacheDir(settings models.Settings) string {
-	cacheDir := settings.CacheDir
-	if cacheDir == "" {
-		if userCache, err := os.UserCacheDir(); err == nil {
-			cacheDir = filepath.Join(userCache, "saki")
-		} else {
-			cacheDir = filepath.Join(os.TempDir(), "saki")
-		}
-	}
-	return filepath.Join(cacheDir, "audio")
+	return cachepaths.RootsFor(settings.CacheDir).Audio
+}
+
+func resolvedOfflineDir(settings models.Settings) string {
+	return cachepaths.RootsFor(settings.CacheDir).Offline
 }
 
 func fallbackText(value, fallback string) string {

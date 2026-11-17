@@ -7,25 +7,83 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/xiongnemo/saki/internal/paths"
 )
 
+// Roots are the directories that hold one subdirectory per account namespace.
+type Roots struct {
+	Audio   string
+	Covers  string
+	Catalog string
+	Offline string
+}
+
+// RootsOf returns the directories of a resolved storage layout.
+func RootsOf(storage paths.Storage) Roots {
+	return Roots{
+		Audio:   storage.Audio.Path,
+		Covers:  storage.Covers.Path,
+		Catalog: storage.Catalog.Path,
+		Offline: storage.Offline.Path,
+	}
+}
+
+var (
+	defaultMu    sync.Mutex
+	defaultRoots *Roots
+)
+
+// SetDefaultRoots sets the directories used when settings.cacheDir is empty.
+// The TUI resolves them once at startup, together with the notices for
+// directories still at an old location.
+func SetDefaultRoots(roots Roots) {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	defaultRoots = &roots
+}
+
+// DefaultRoots returns the directories used when settings.cacheDir is empty,
+// resolving them on first use if SetDefaultRoots was not called.
+func DefaultRoots() Roots {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultRoots == nil {
+		var roots Roots
+		if env, err := paths.System(); err == nil {
+			roots = RootsOf(paths.ResolveStorage(env, ""))
+		} else {
+			roots = RootsFor(filepath.Join(os.TempDir(), paths.App))
+		}
+		defaultRoots = &roots
+	}
+	return *defaultRoots
+}
+
+// RootsFor returns the directories for a settings.cacheDir value: everything
+// below it when it is set, the default layout otherwise.
+func RootsFor(root string) Roots {
+	if strings.TrimSpace(root) == "" {
+		return DefaultRoots()
+	}
+	return Roots{
+		Audio:   filepath.Join(root, paths.AudioDirName),
+		Covers:  filepath.Join(root, paths.CoversDirName),
+		Catalog: filepath.Join(root, paths.CatalogDirName),
+		Offline: filepath.Join(root, paths.OfflineDirName),
+	}
+}
+
 type Scope struct {
-	root      string
+	roots     Roots
 	namespace string
 }
 
+// NewScope scopes the directories for root (a settings.cacheDir value, empty
+// for the default layout) to one account and library.
 func NewScope(root string, account string, endpoint string, fingerprint string) Scope {
-	return Scope{root: ResolveRoot(root), namespace: Namespace(account, endpoint, fingerprint)}
-}
-
-func ResolveRoot(root string) string {
-	if root != "" {
-		return root
-	}
-	if userCache, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(userCache, "saki")
-	}
-	return filepath.Join(os.TempDir(), "saki")
+	return Scope{roots: RootsFor(root), namespace: Namespace(account, endpoint, fingerprint)}
 }
 
 func Namespace(account string, endpoint string, fingerprint string) string {
@@ -45,7 +103,7 @@ func (s Scope) AudioDir() string {
 }
 
 func (s Scope) AudioRoot() string {
-	return filepath.Join(s.root, "audio")
+	return s.roots.Audio
 }
 
 func (s Scope) AudioPath(trackID string) string {
@@ -53,7 +111,7 @@ func (s Scope) AudioPath(trackID string) string {
 }
 
 func (s Scope) CoversDir() string {
-	return filepath.Join(s.root, "covers", s.namespace)
+	return filepath.Join(s.roots.Covers, s.namespace)
 }
 
 func (s Scope) CoverPath(coverArtID string) string {
@@ -61,7 +119,7 @@ func (s Scope) CoverPath(coverArtID string) string {
 }
 
 func (s Scope) CatalogDir() string {
-	return filepath.Join(s.root, "catalog", s.namespace)
+	return filepath.Join(s.roots.Catalog, s.namespace)
 }
 
 func (s Scope) CatalogPath() string {
@@ -69,7 +127,7 @@ func (s Scope) CatalogPath() string {
 }
 
 func (s Scope) OfflineDir() string {
-	return filepath.Join(s.root, "offline", s.namespace)
+	return filepath.Join(s.roots.Offline, s.namespace)
 }
 
 func hashString(value string) string {

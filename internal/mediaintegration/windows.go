@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/xiongnemo/saki/internal/models"
+	"github.com/xiongnemo/saki/internal/paths"
 )
 
 const smtcDLLName = "saki_smtc.dll"
@@ -68,22 +69,20 @@ func findSMTCDLL() (string, error) {
 	return smtcDLLName, embeddedErr
 }
 
+// extractEmbeddedSMTCDLL writes the embedded shim to the cache directory,
+// %USERPROFILE%\.cache\saki\smtc by default, and returns its path. The copy is
+// regenerated whenever it is missing or differs, so it never needs migrating;
+// `saki migrate` deletes the copy older releases left in %LOCALAPPDATA%\Saki.
 func extractEmbeddedSMTCDLL() (string, error) {
 	if len(embeddedSMTCDLL) == 0 {
 		return "", fmt.Errorf("embedded %s is empty", smtcDLLName)
 	}
-	cacheRoot, err := os.UserCacheDir()
-	if err != nil || cacheRoot == "" {
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			cacheRoot = localAppData
-		} else if err != nil {
-			return "", err
-		} else {
-			return "", fmt.Errorf("user cache directory is unavailable")
-		}
+	env, err := paths.System()
+	if err != nil {
+		return "", err
 	}
-	dir := filepath.Join(cacheRoot, "Saki", "smtc")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir := env.SMTCDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	path := filepath.Join(dir, smtcDLLName)

@@ -102,6 +102,8 @@ type App struct {
 
 	historyMu sync.Mutex
 	history   []func()
+
+	startupNotice string
 }
 
 type searchPane int
@@ -170,6 +172,12 @@ func (a *App) SetLocalStatus(status func(context.Context, string) (cached bool, 
 
 func (a *App) SetOnlineReady(callback func()) {
 	a.onlineReady = callback
+}
+
+// SetStartupNotice shows message in the status line instead of "Ready" when
+// the main screen opens. The full lines went to stderr before the TUI started.
+func (a *App) SetStartupNotice(message string) {
+	a.startupNotice = message
 }
 
 func (a *App) NotifyLocalStatusChanged() {
@@ -439,7 +447,11 @@ func (a *App) showMain() {
 
 	a.status = newPlayingView()
 	a.notice = newStatusLine()
-	a.setNotice("Ready")
+	if a.startupNotice != "" {
+		a.setNotice("[yellow]" + tview.Escape(i18n.T(a.startupNotice)) + "[-]")
+	} else {
+		a.setNotice("Ready")
+	}
 	a.help = newControlsHelpView()
 
 	left := tview.NewFlex().SetDirection(tview.FlexRow).
