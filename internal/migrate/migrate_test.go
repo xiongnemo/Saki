@@ -475,7 +475,8 @@ func TestRelativeSymlinkStillResolvesAfterMove(t *testing.T) {
 		t.Skip("symlinks need privileges on Windows")
 	}
 	f := newFixture(t)
-	write(t, filepath.Join(f.home, "dotfiles", "saki.json"), "linked")
+	const linked = `{"account":{"username":"linked"}}`
+	write(t, filepath.Join(f.home, "dotfiles", "saki.json"), linked)
 	if err := os.MkdirAll(filepath.Dir(f.legacyConfig()), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -486,8 +487,11 @@ func TestRelativeSymlinkStillResolvesAfterMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v\n%s", err, out)
 	}
-	if read(t, f.newConfig()) != "linked" {
+	if read(t, f.newConfig()) != linked {
 		t.Fatalf("symlink broken after move\n%s", out)
+	}
+	if info, err := os.Lstat(f.newConfig()); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+		t.Fatalf("moved config is no longer a symlink: %v", err)
 	}
 }
 
