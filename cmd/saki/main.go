@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/xiongnemo/saki/internal/config"
 	"github.com/xiongnemo/saki/internal/instancelock"
 	"github.com/xiongnemo/saki/internal/mediaintegration"
+	"github.com/xiongnemo/saki/internal/migrate"
 	"github.com/xiongnemo/saki/internal/models"
 	"github.com/xiongnemo/saki/internal/offline"
 	"github.com/xiongnemo/saki/internal/paths"
@@ -39,8 +41,17 @@ func runCLIProcess(args []string) int {
 		version: version.String(),
 		runTUI:  runTUI,
 		install: runInstall,
+		migrate: runMigrate,
 	}
 	return runCLI(args, runtime)
+}
+
+func runMigrate(options migrateOptions, stdout io.Writer) error {
+	env, err := paths.System()
+	if err != nil {
+		return err
+	}
+	return migrate.Run(context.Background(), migrate.Options{Env: env, DryRun: options.dryRun, Out: stdout})
 }
 
 // resolveFiles takes the instance lock, finds config and storage, and returns

@@ -10,13 +10,44 @@ import (
 const (
 	rootHelp = `Usage: saki [--version|-v]
        saki install [--dir PATH] [--yes|-y]
+       saki migrate [--dry-run]
 
 Commands:
   install  install the running Saki executable
+  migrate  move files from where older releases kept them to the XDG layout
 
 Options:
   -h, --help     show help
   -v, --version  print version and exit
+
+Files (~ is the home directory, %USERPROFILE% on Windows):
+  ~/.config/saki        config.json ($XDG_CONFIG_HOME/saki)
+  ~/.local/share/saki   offline catalog and downloads ($XDG_DATA_HOME/saki)
+  ~/.local/state/saki   instance lock ($XDG_STATE_HOME/saki)
+  ~/.cache/saki         audio and cover art caches ($XDG_CACHE_HOME/saki)
+`
+	migrateHelp = `Usage: saki migrate [--dry-run]
+
+Moves the files older Saki releases kept in ~/.saki and in the OS cache
+directory (%LOCALAPPDATA%\saki on Windows, ~/Library/Caches/saki on macOS,
+~/.cache/saki on Linux) to the XDG layout:
+
+  ~/.config/saki/config.json   config
+  ~/.local/share/saki          offline catalog and downloads
+  ~/.cache/saki                audio and cover art caches
+
+Nothing is overwritten. A file that exists in both places with different
+content stays in both and is reported, and migrate exits 1. Download paths in
+the offline catalog, and a settings.cacheDir naming the old default, are
+rewritten. The SMTC shim older Windows releases extracted is deleted; Saki
+extracts it again. Once everything has moved, migrate has nothing to do.
+
+migrate refuses to run while another Saki is running. Releases from before
+the XDG layout cannot be detected, so quit those yourself first.
+
+Options:
+      --dry-run  print the plan and change nothing
+  -h, --help     show help
 `
 	installHelp = `Usage: saki install [--dir PATH] [--yes|-y]
 
@@ -32,6 +63,10 @@ type installOptions struct {
 	yes       bool
 }
 
+type migrateOptions struct {
+	dryRun bool
+}
+
 type commandRuntime struct {
 	stdin   io.Reader
 	stdout  io.Writer
@@ -39,6 +74,7 @@ type commandRuntime struct {
 	version string
 	runTUI  func() error
 	install func(installOptions) error
+	migrate func(migrateOptions, io.Writer) error
 }
 
 type checkedWriter struct {
@@ -63,6 +99,9 @@ func (writer *checkedWriter) Write(data []byte) (int, error) {
 func runCLI(args []string, runtime commandRuntime) int {
 	if len(args) > 0 && args[0] == "install" {
 		return runInstallCLI(args[1:], runtime)
+	}
+	if len(args) > 0 && args[0] == "migrate" {
+		return runMigrateCLI(args[1:], runtime)
 	}
 
 	flags := flag.NewFlagSet("saki", flag.ContinueOnError)
@@ -139,6 +178,36 @@ func runInstallCLI(args []string, runtime commandRuntime) int {
 	}
 	if err := runtime.install(options); err != nil {
 		return reportFailure(runtime.stderr, "install", err)
+	}
+	return 0
+}
+
+func runMigrateCLI(args []string, runtime commandRuntime) int {
+	flags := flag.NewFlagSet("saki migrate", flag.ContinueOnError)
+	parserOutput := &checkedWriter{writer: runtime.stderr}
+	flags.SetOutput(parserOutput)
+	var options migrateOptions
+	var showHelp bool
+	flags.BoolVar(&options.dryRun, "dry-run", false, "print the plan and change nothing")
+	flags.BoolVar(&showHelp, "help", false, "show help")
+	flags.BoolVar(&showHelp, "h", false, "show help")
+	if err := flags.Parse(args); err != nil {
+		if parserOutput.err != nil {
+			return reportFailure(runtime.stderr, "write stderr", parserOutput.err)
+		}
+		return 2
+	}
+	if flags.NArg() != 0 {
+		return reportInvalid(runtime.stderr, fmt.Sprintf("unexpected migrate argument %q", flags.Arg(0)))
+	}
+	if showHelp {
+		if err := writeText(runtime.stdout, migrateHelp); err != nil {
+			return reportFailure(runtime.stderr, "write help", err)
+		}
+		return 0
+	}
+	if err := runtime.migrate(options, runtime.stdout); err != nil {
+		return reportFailure(runtime.stderr, "migrate", err)
 	}
 	return 0
 }

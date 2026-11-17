@@ -105,9 +105,85 @@ func buildCLIBinary(t *testing.T) string {
 	return binary
 }
 
+// sandboxEnv is the process environment with the home directory, the XDG
+// variables, APPDATA and LOCALAPPDATA pointed at home, so that a Saki started
+// by a test never sees the real user's files.
+func sandboxEnv(home string) []string {
+	overrides := map[string]string{
+		"HOME":            home,
+		"USERPROFILE":     home,
+		"APPDATA":         filepath.Join(home, "AppData", "Roaming"),
+		"LOCALAPPDATA":    filepath.Join(home, "AppData", "Local"),
+		"XDG_CONFIG_HOME": "",
+		"XDG_DATA_HOME":   "",
+		"XDG_STATE_HOME":  "",
+		"XDG_CACHE_HOME":  "",
+		"XDG_RUNTIME_DIR": "",
+	}
+	var env []string
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		overridden := false
+		for key := range overrides {
+			if strings.EqualFold(name, key) {
+				overridden = true
+				break
+			}
+		}
+		if !overridden {
+			env = append(env, entry)
+		}
+	}
+	for key, value := range overrides {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func TestCLIProcess_migrateMovesLegacyConfigInSandboxedHome(t *testing.T) {
+	binary := buildCLIBinary(t)
+	home := t.TempDir()
+	legacy := filepath.Join(home, ".saki", "config.json")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte(`{"account":{"username":"nemo"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, string, error) {
+		command := exec.Command(binary, args...)
+		command.Env = sandboxEnv(home)
+		var stdout, stderr bytes.Buffer
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		err := command.Run()
+		return stdout.String(), stderr.String(), err
+	}
+	moved := filepath.Join(home, ".config", "saki", "config.json")
+
+	stdout, stderr, err := run("migrate", "--dry-run")
+	if err != nil || !strings.Contains(stdout, legacy+" -> "+moved) || stderr != "" {
+		t.Fatalf("dry run: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("dry run moved the config: %v", err)
+	}
+
+	if stdout, stderr, err = run("migrate"); err != nil {
+		t.Fatalf("migrate: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+	}
+	if _, err := os.Stat(moved); err != nil {
+		t.Fatalf("config not moved: %v\n%s", err, stdout)
+	}
+	if stdout, _, err = run("migrate"); err != nil || !strings.Contains(stdout, "Nothing to migrate.") {
+		t.Fatalf("second migrate: %v\n%s", err, stdout)
+	}
+}
+
 type callbackFailures struct {
 	tui     error
 	install error
+	migrate error
 }
 
 type cliTestResult struct {
@@ -117,6 +193,8 @@ type cliTestResult struct {
 	tuiCalls       int
 	installCalls   int
 	installOptions installOptions
+	migrateCalls   int
+	migrateOptions migrateOptions
 }
 
 func executeCLIForTest(args []string, failures callbackFailures) cliTestResult {
@@ -137,6 +215,11 @@ func executeCLIForTest(args []string, failures callbackFailures) cliTestResult {
 			result.installOptions = options
 			return failures.install
 		},
+		migrate: func(options migrateOptions, _ io.Writer) error {
+			result.migrateCalls++
+			result.migrateOptions = options
+			return failures.migrate
+		},
 	}
 
 	result.status = runCLI(args, runtime)
@@ -147,8 +230,29 @@ func executeCLIForTest(args []string, failures callbackFailures) cliTestResult {
 
 func assertNoCallbacks(t *testing.T, result cliTestResult) {
 	t.Helper()
-	if result.tuiCalls != 0 || result.installCalls != 0 {
-		t.Fatalf("callback calls = tui:%d install:%d, want both zero", result.tuiCalls, result.installCalls)
+	if result.tuiCalls != 0 || result.installCalls != 0 || result.migrateCalls != 0 {
+		t.Fatalf("callback calls = tui:%d install:%d migrate:%d, want all zero", result.tuiCalls, result.installCalls, result.migrateCalls)
+	}
+}
+
+func TestCLI_Migrate_passesParsedOptions(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want migrateOptions
+	}{
+		{[]string{"migrate"}, migrateOptions{}},
+		{[]string{"migrate", "--dry-run"}, migrateOptions{dryRun: true}},
+		{[]string{"migrate", "-dry-run"}, migrateOptions{dryRun: true}},
+	} {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			result := executeCLIForTest(test.args, callbackFailures{})
+			if result.status != 0 || result.migrateCalls != 1 || result.migrateOptions != test.want {
+				t.Fatalf("status/calls/options = %d/%d/%+v, want 0/1/%+v", result.status, result.migrateCalls, result.migrateOptions, test.want)
+			}
+			if result.stderr != "" || result.tuiCalls != 0 || result.installCalls != 0 {
+				t.Fatalf("unexpected result: %+v", result)
+			}
+		})
 	}
 }
 
@@ -192,6 +296,8 @@ func TestCLI_Help_returnsZero_withoutCallbacks(t *testing.T) {
 		{"root short", []string{"-h"}, "Usage: saki"},
 		{"install long", []string{"install", "--help"}, "Usage: saki install"},
 		{"install short", []string{"install", "-h"}, "Usage: saki install"},
+		{"migrate long", []string{"migrate", "--help"}, "Usage: saki migrate"},
+		{"migrate short", []string{"migrate", "-h"}, "Usage: saki migrate"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -262,6 +368,9 @@ func TestCLI_InvalidInput_returnsTwo_beforeCallbacks(t *testing.T) {
 		{"install unknown flag", []string{"install", "--unknown"}},
 		{"install malformed bool", []string{"install", "--yes=maybe"}},
 		{"install help extra", []string{"install", "--help", "extra"}},
+		{"migrate positional", []string{"migrate", "extra"}},
+		{"migrate unknown flag", []string{"migrate", "--force"}},
+		{"migrate malformed bool", []string{"migrate", "--dry-run=maybe"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -286,6 +395,7 @@ func TestCLI_CallbackFailure_returnsOne_withConciseStderr(t *testing.T) {
 	}{
 		{"TUI", nil, callbackFailures{tui: errors.New("callback failed")}, "saki: TUI: callback failed\n"},
 		{"installer", []string{"install"}, callbackFailures{install: errors.New("callback failed")}, "saki: install: callback failed\n"},
+		{"migrate", []string{"migrate"}, callbackFailures{migrate: errors.New("callback failed")}, "saki: migrate: callback failed\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
