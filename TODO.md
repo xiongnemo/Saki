@@ -419,3 +419,12 @@ Status: completed on branch `xdg-dirs`; waiting for review before it reaches `de
 - [x] Add `saki migrate [--dry-run]`: merge without overwriting, keep both copies on conflict, rewrite download paths in the catalog databases and a `cacheDir` that names the old default, delete the old SMTC shim, refuse while another Saki holds the lock.
 - [x] Tests for resolution and migrate; README "Files" section; update the SMTC docs.
 - [ ] Update the Scoop manifests' `notes` once a build with this layout is published.
+
+## Windows Version Resource
+
+Status: in progress on branch `version-info`.
+
+- [ ] Give the Windows `saki.exe` builds file properties: a VERSIONINFO (`RT_VERSION`) resource only, no manifest and no icon, since a manifest changes DPI, OS-version and code-page behaviour at runtime.
+- [ ] In the Windows build jobs, before `go build`, write a winres JSON from the version the build metadata step already computed and run `go-winres@v0.3.3 make` to produce `cmd/saki/rsrc_windows_{386,amd64,arm64}.syso`; ignore both in Git.
+- [ ] Fixed file and product version are the numeric base `X.Y.Z.0`; the FileVersion and ProductVersion strings are the full published version; the Prerelease flag is set exactly when the build is not a release, the same condition that publishes a prerelease.
+- [ ] Verify with a `rehearse_release` run on the branch: read `VersionInfo` from the 386, amd64 and arm64 executables, and check the Linux and macOS jobs still pass.
