@@ -422,9 +422,10 @@ Status: completed on branch `xdg-dirs`; waiting for review before it reaches `de
 
 ## Windows Version Resource
 
-Status: in progress on branch `version-info`.
+Status: implemented on branch `version-info`; waiting for CI verification and review before it reaches `dev`.
 
-- [ ] Give the Windows `saki.exe` builds file properties: a VERSIONINFO (`RT_VERSION`) resource only, no manifest and no icon, since a manifest changes DPI, OS-version and code-page behaviour at runtime.
-- [ ] In the Windows build jobs, before `go build`, write a winres JSON from the version the build metadata step already computed and run `go-winres@v0.3.3 make` to produce `cmd/saki/rsrc_windows_{386,amd64,arm64}.syso`; ignore both in Git.
-- [ ] Fixed file and product version are the numeric base `X.Y.Z.0`; the FileVersion and ProductVersion strings are the full published version; the Prerelease flag is set exactly when the build is not a release, the same condition that publishes a prerelease.
+- [x] Give the Windows `saki.exe` builds file properties: a VERSIONINFO (`RT_VERSION`) resource only, no manifest and no icon, since a manifest changes DPI, OS-version and code-page behaviour at runtime.
+- [x] In the Windows build jobs, before `go build`, write a winres JSON from the version the build metadata step already computed and run `go-winres@v0.3.3 make` to produce `cmd/saki/rsrc_windows_{386,amd64,arm64}.syso`; ignore both in Git.
+- [x] Fixed file and product version are the numeric base `X.Y.Z.0`; the FileVersion and ProductVersion strings are the full published version; the Prerelease flag is set exactly when the build is not a release, the same condition that publishes a prerelease.
+- [x] Fail the Windows build when the executable's file properties do not carry the version it reports.
 - [ ] Verify with a `rehearse_release` run on the branch: read `VersionInfo` from the 386, amd64 and arm64 executables, and check the Linux and macOS jobs still pass.

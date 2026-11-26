@@ -20,6 +20,10 @@
 # Local build output
 dist/
 
+# Windows version resource, generated in CI
+rsrc_windows_*.syso
+/cmd/saki/winres.json
+
 # Dependency directories (remove the comment below to include it)
 vendor/
 

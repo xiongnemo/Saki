@@ -364,6 +364,64 @@ jobs:
             *) dpkg-deb -f "dist/${ARTIFACT_NAME}.deb" Package Version Architecture Depends ;;
           esac
 
+      # File properties for saki.exe, from the version the build metadata step
+      # computed. Only a VERSIONINFO resource: a manifest would change DPI,
+      # OS-version and code-page behaviour, and there is no icon. go build links
+      # the rsrc_windows_<arch>.syso matching GOARCH from cmd/saki. The fixed
+      # version is numeric, so it is the base X.Y.Z.0; the strings carry the full
+      # version. Prerelease is set when this build is not a release, the same
+      # condition that publishes it as a GitHub prerelease.
+      - name: Generate Windows version resource
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        env:
+          GO_WINRES: github.com/tc-hib/go-winres@v0.3.3
+        run: |
+          if ($env:SAKI_BASE_VERSION -notmatch '^v([0-9]+)\.([0-9]+)\.([0-9]+)$') {
+            throw "Base version '$env:SAKI_BASE_VERSION' is not vMAJOR.MINOR.PATCH."
+          }
+          $numericVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+          $flags = if ($env:SAKI_RELEASE -eq 'true') { '' } else { 'Prerelease' }
+          $resources = [ordered]@{
+            RT_VERSION = [ordered]@{
+              '#1' = [ordered]@{
+                '0000' = [ordered]@{
+                  fixed = [ordered]@{
+                    file_version = $numericVersion
+                    product_version = $numericVersion
+                    flags = $flags
+                  }
+                  info = [ordered]@{
+                    '0409' = [ordered]@{
+                      CompanyName = 'Nemo Xiong'
+                      FileDescription = 'Terminal Subsonic music player.'
+                      FileVersion = $env:SAKI_VERSION
+                      InternalName = 'saki'
+                      # The year of the repository's first commit.
+                      LegalCopyright = "Copyright $([char]0x00A9) 2026 Nemo Xiong"
+                      OriginalFilename = 'saki.exe'
+                      ProductName = 'Saki'
+                      ProductVersion = $env:SAKI_VERSION
+                    }
+                  }
+                }
+              }
+            }
+          }
+          $resources | ConvertTo-Json -Depth 8 -EscapeHandling EscapeNonAscii |
+            Set-Content -LiteralPath cmd\saki\winres.json -Encoding utf8NoBOM
+          Get-Content -LiteralPath cmd\saki\winres.json
+          Push-Location cmd\saki
+          try {
+            go run $env:GO_WINRES make --in winres.json --out rsrc --arch '386,amd64,arm64'
+            if ($LASTEXITCODE -ne 0) {
+              throw "go-winres failed with exit code $LASTEXITCODE."
+            }
+          } finally {
+            Pop-Location
+          }
+          Get-ChildItem -Path cmd\saki -Filter 'rsrc_windows_*.syso' | Select-Object Name, Length
+
       - name: Build Windows artifact
         if: matrix.goos == 'windows'
         shell: pwsh
@@ -380,6 +438,10 @@ jobs:
             throw "Built version '$builtVersion' does not match '$env:SAKI_VERSION'."
           }
           Write-Host "Built version: $builtVersion"
+          $fileInfo = (Get-Item -LiteralPath "dist\$env:ARTIFACT_NAME\saki.exe").VersionInfo
+          if ($fileInfo.ProductVersion -cne $env:SAKI_VERSION -or $fileInfo.FileVersion -cne $env:SAKI_VERSION) {
+            throw "File properties carry '$($fileInfo.ProductVersion)', not '$env:SAKI_VERSION'."
+          }
           Compress-Archive -Path "dist\$env:ARTIFACT_NAME\*" -DestinationPath "dist\$env:ARTIFACT_NAME.zip" -Force
           "ARCHIVE_PATH=dist\$env:ARTIFACT_NAME.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 

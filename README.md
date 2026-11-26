@@ -237,6 +237,11 @@ Each build embeds version metadata in this format:
 v{major}.{minor}.{patch}-{branch}-{commit12}[-dirty]
 ```
 
+The Windows executables CI builds also carry it in their file properties: the
+full version as the file and product version, its numeric base as
+`{major}.{minor}.{patch}.0`, and the pre-release flag on everything but a
+release.
+
 For CI and build-script releases, `patch` is derived from Git history: the
 nearest exact `vMAJOR.MINOR.PATCH` tag plus the number of commits since that
 tag. If no exact release tag exists, builds use `v0.0.1` as the fallback base
